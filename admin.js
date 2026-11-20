@@ -23,6 +23,7 @@ async function loadRefs(){
 }
 const activeItems = () => S.items.filter(i => i.active);
 const activeLocs = () => S.locs.filter(l => l.active);
+const monthEnd = ym => new Date(Date.UTC(+ym.slice(0,4), +ym.slice(5,7), 0)).toISOString().slice(0,10);
 const priceOn = (id,d) => { const p = S.prices.find(p => p.item_id===id && String(p.effective_from)<=d); return p ? p.price : 0; };
 const priceFor = (wid,id,d) => { const p = (S.wprices||[]).find(p => p.worker_id===wid && p.item_id===id && String(p.effective_from)<=d); return p ? p.price : priceOn(id,d); };
 const opts = (list, sel, blank) => (blank!=null ? `<option value="">${E(blank)}</option>` : '') + list.map(o => `<option value="${o.id}"${o.id===sel?' selected':''}>${E(o.name)}</option>`).join('');
@@ -369,7 +370,7 @@ async function pPay(){
     const v = $('#p-ym').value; st.payYm = v;
     const [r, z] = await Promise.all([
       sb.from('v_month_pay').select('*').eq('ym',v).order('worker_name'),
-      sb.from('attendance').select('id',{count:'exact',head:true}).eq('price_applied',0).gte('work_date',v+'-01').lte('work_date',v+'-31')]);
+      sb.from('attendance').select('id',{count:'exact',head:true}).eq('price_applied',0).gte('work_date',v+'-01').lte('work_date',monthEnd(v))]);
     if(r.error){ $('#p-res').innerHTML = `<div class="warn">${E(r.error.message)}</div>`; return; }
     rows = r.data||[];
     $('#p-warn').innerHTML = z.count ? `<div class="warn">이 달에 일당이 0원인 기록이 ${z.count}건 있습니다. 항목·단가 메뉴에서 단가를 입력한 뒤 조회 메뉴에서 해당 기록의 일당을 수정하세요.</div>` : '';
@@ -393,7 +394,7 @@ const money = n => (n<0 ? '-' : '') + Y.won(Math.abs(n));
 async function stmtData(ym){
   const [m, a, j] = await Promise.all([
     sb.from('v_month_pay').select('*').eq('ym',ym).order('worker_name'),
-    sb.from('v_attendance_pay').select('worker_id,work_date,item_name,location_name,check_in,check_out,gross').gte('work_date',ym+'-01').lte('work_date',ym+'-31').order('work_date'),
+    sb.from('v_attendance_pay').select('worker_id,work_date,item_name,location_name,check_in,check_out,gross').gte('work_date',ym+'-01').lte('work_date',monthEnd(ym)).order('work_date'),
     sb.from('pay_adjustments').select('*').eq('ym',ym).order('created_at')]);
   if(m.error) throw m.error; if(a.error) throw a.error;
   const byW = new Map();
