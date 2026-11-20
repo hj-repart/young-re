@@ -2,7 +2,7 @@
 const Y = window.YRE, sb = Y.sb, E = Y.esc;
 const $ = s => document.querySelector(s);
 const main = $('#main');
-const NAMES = {board:'상황판',assign:'업무 부여',qr:'QR 만들기',notes:'작업내역',query:'조회',pay:'정산',items:'항목·단가',accounts:'계정',reset:'초기화'};
+const NAMES = {board:'상황판',assign:'업무 부여',qr:'QR 만들기',notes:'작업내역',query:'조회',pay:'정산',stmt:'명세서',items:'항목·단가',accounts:'계정',reset:'초기화'};
 const TAX = {daily:'일용근로소득',biz33:'3.3% 사업소득',none:'세금 없음'};
 const TAXLIST = [{id:'daily',name:'일용근로'},{id:'biz33',name:'3.3%'},{id:'none',name:'없음'}];
 let S = {items:[],locs:[],workers:[],prices:[],settings:[]};
@@ -382,6 +382,122 @@ async function pPay(){
   load();
 }
 
+/* ---------- 명세서 ---------- */
+const SOPT_KEY = 'yre_stmt_opts', SDEF = {mode:'detail', loc:true, time:false, tax:true, adj:true};
+const sopt = () => { try{ return Object.assign({}, SDEF, JSON.parse(localStorage.getItem(SOPT_KEY)||'{}')); }catch(e){ return Object.assign({}, SDEF); } };
+const ssave = o => { try{ localStorage.setItem(SOPT_KEY, JSON.stringify(o)); }catch(e){} };
+const TAXNAME = {daily:'일용근로소득', biz33:'3.3% 사업소득', none:'세금 없음'};
+const ymLabel = ym => ym.slice(0,4) + '년 ' + parseInt(ym.slice(5),10) + '월';
+const money = n => (n<0 ? '-' : '') + Y.won(Math.abs(n));
+
+async function stmtData(ym){
+  const [m, a, j] = await Promise.all([
+    sb.from('v_month_pay').select('*').eq('ym',ym).order('worker_name'),
+    sb.from('v_attendance_pay').select('worker_id,work_date,item_name,location_name,check_in,check_out,gross').gte('work_date',ym+'-01').lte('work_date',ym+'-31').order('work_date'),
+    sb.from('pay_adjustments').select('*').eq('ym',ym).order('created_at')]);
+  if(m.error) throw m.error; if(a.error) throw a.error;
+  const byW = new Map();
+  (m.data||[]).forEach(r => byW.set(r.worker_id, {pay:r, days:[], adj:[]}));
+  (a.data||[]).forEach(r => { const x = byW.get(r.worker_id); if(x) x.days.push(r); });
+  (j.data||[]).forEach(r => { const x = byW.get(r.worker_id); if(x) x.adj.push(r); });
+  return {list:[...byW.values()], adjMissing: !!j.error};
+}
+function stmtModel(x, ym, o){
+  const p = x.pay, adjSum = x.adj.reduce((s,r) => s + r.amount, 0), tax = (p.income_tax||0) + (p.local_tax||0) + (p.emp_ins||0);
+  const rows = o.mode==='detail' ? x.days.map(d => ({date:Y.fmtDate(d.work_date), what:d.item_name + (o.loc && d.location_name ? ' · ' + d.location_name : ''), time:o.time ? Y.fmtDur(d.check_in,d.check_out) : '', amt:d.gross})) : [];
+  const sum = [['근무일수', p.days + '일', 0], ['총 지급액', p.gross, 1]];
+  if(o.adj) x.adj.forEach(r => sum.push([r.label, r.amount, 1]));
+  if(o.adj && x.adj.length) sum.push(['가감 합계', adjSum, 1]);
+  let total, tl;
+  if(o.tax && p.tax_type!=='none'){
+    sum.push(['소득세', -(p.income_tax||0), 1], ['지방소득세', -(p.local_tax||0), 1]);
+    if(p.emp_ins) sum.push(['고용보험', -p.emp_ins, 1]);
+    total = p.gross + (o.adj ? adjSum : 0) - tax; tl = '실지급액';
+  } else { total = p.gross + (o.adj ? adjSum : 0); tl = o.tax ? '실지급액' : '지급 합계'; }
+  return {name:p.worker_name, phone:p.phone, taxType:TAXNAME[p.tax_type]||'', title:ymLabel(ym) + ' 급여 명세서', rows, sum, total, tl, showDetail:o.mode==='detail', showTime:!!o.time};
+}
+const stmtHtml = m => `<div class="sheet"><div class="sh-t">${E(m.title)}</div><div class="sh-n">${E(m.name)} <small>${E(m.taxType)}</small></div>
+  ${m.showDetail && m.rows.length ? `<table class="sh-d"><tbody>${m.rows.map(r => `<tr><td>${E(r.date)}</td><td>${E(r.what)}</td>${m.showTime?`<td>${E(r.time)}</td>`:''}<td class="r">${Y.won(r.amt)}</td></tr>`).join('')}</tbody></table>` : ''}
+  <table class="sh-s"><tbody>${m.sum.map(r => `<tr><td>${E(r[0])}</td><td class="r${typeof r[1]==='number' && r[1]<0 ? ' neg' : ''}">${typeof r[1]==='number' ? money(r[1]) : E(r[1])}</td></tr>`).join('')}<tr class="tot"><td>${E(m.tl)}</td><td class="r">${money(m.total)}</td></tr></tbody></table></div>`;
+function stmtCanvas(m){
+  const W = 720, rows = m.showDetail ? m.rows : [], H = 190 + rows.length*34 + (rows.length?24:0) + m.sum.length*38 + 80;
+  const c = document.createElement('canvas'), S2 = 2; c.width = W*S2; c.height = H*S2; const x = c.getContext('2d'); x.scale(S2,S2);
+  x.fillStyle = '#fff'; x.fillRect(0,0,W,H);
+  const F = (w,sz) => `${w} ${sz}px Pretendard, "Noto Sans KR", sans-serif`;
+  let y = 56; x.fillStyle = '#1f2547'; x.font = F(800,26); x.textAlign = 'left'; x.fillText(m.title, 40, y);
+  y += 44; x.font = F(700,22); x.fillText(m.name, 40, y); x.font = F(500,15); x.fillStyle = '#7d84a8'; x.fillText(m.taxType, 40 + x.measureText(m.name).width + 0, y); 
+  x.strokeStyle = '#e1e6fb'; x.lineWidth = 1.5; y += 20; x.beginPath(); x.moveTo(40,y); x.lineTo(W-40,y); x.stroke(); y += 12;
+  rows.forEach(r => { y += 34; x.textAlign = 'left'; x.fillStyle = '#4a5068'; x.font = F(500,16); x.fillText(r.date, 40, y); x.fillStyle = '#1f2547'; x.fillText(r.what, 190, y); if(m.showTime){ x.fillStyle = '#7d84a8'; x.fillText(r.time, 430, y); } x.textAlign = 'right'; x.fillStyle = '#1f2547'; x.fillText(Y.won(r.amt), W-40, y); });
+  if(rows.length){ y += 18; x.beginPath(); x.moveTo(40,y); x.lineTo(W-40,y); x.stroke(); y += 6; }
+  m.sum.forEach(r => { y += 38; x.textAlign = 'left'; x.fillStyle = '#4a5068'; x.font = F(600,17); x.fillText(r[0], 40, y); x.textAlign = 'right'; const neg = typeof r[1]==='number' && r[1]<0; x.fillStyle = neg ? '#c0275a' : '#1f2547'; x.fillText(typeof r[1]==='number' ? money(r[1]) : r[1], W-40, y); });
+  y += 18; x.fillStyle = '#eef2ff'; x.fillRect(32, y, W-64, 52); x.textAlign = 'left'; x.fillStyle = '#2c3470'; x.font = F(800,19); x.fillText(m.tl, 48, y+33); x.textAlign = 'right'; x.font = F(800,24); x.fillText(money(m.total), W-48, y+34);
+  return c;
+}
+function stmtSaveImg(m){ const c = stmtCanvas(m), a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `${m.name}_${m.title}.png`; document.body.append(a); a.click(); a.remove(); }
+function stmtSheetRows(m){
+  const out = [[m.title], [m.name, m.taxType], []];
+  if(m.showDetail && m.rows.length){ out.push(m.showTime ? ['일자','항목','근무시간','일당'] : ['일자','항목','일당']); m.rows.forEach(r => out.push(m.showTime ? [r.date,r.what,r.time,r.amt] : [r.date,r.what,r.amt])); out.push([]); }
+  m.sum.forEach(r => out.push([r[0], r[1]])); out.push([m.tl, m.total]); return out;
+}
+async function pStmt(){
+  const ym = st.stYm || Y.today().slice(0,7); let o = sopt(), cur = null, data = null;
+  main.innerHTML = `<h1 class="pt">명세서</h1><div id="st-box"></div>`;
+  const draw = async () => {
+    const box = $('#st-box'); box.innerHTML = '<div class="cd"><p class="muted">불러오는 중…</p></div>';
+    try{ data = await stmtData(st.stYm || ym); }catch(e){ box.innerHTML = `<div class="warn">${E(e.message||String(e))}</div>`; return; }
+    cur ? detail() : list();
+  };
+  const optBar = () => `<div class="cd"><h3>표시 설정 <span class="muted">(명세서·이미지·엑셀에 공통 적용)</span></h3>
+    <div class="fl"><span>보기 방식</span><div class="seg" id="so-mode"><button data-v="detail" class="${o.mode==='detail'?'on':''}">일자별 상세</button><button data-v="total" class="${o.mode==='total'?'on':''}">합계만</button></div></div>
+    <div class="fl"><span>표시 항목</span><div class="cp" style="display:flex;flex-wrap:wrap;gap:6px">${[['loc','장소'],['time','근무시간'],['tax','세금'],['adj','가감 항목']].map(([k,n]) => `<button type="button" class="cb${o[k]?' on':''}" data-so="${k}" ${k!=='tax'&&k!=='adj'&&o.mode==='total'?'disabled':''}>${n}</button>`).join('')}</div></div></div>`;
+  const bindOpt = () => {
+    document.querySelectorAll('#so-mode button').forEach(b => b.onclick = () => { o.mode = b.dataset.v; ssave(o); cur ? detail() : list(); });
+    document.querySelectorAll('[data-so]').forEach(b => b.onclick = () => { o[b.dataset.so] = !o[b.dataset.so]; ssave(o); cur ? detail() : list(); });
+  };
+  const list = () => {
+    const L = data.list, box = $('#st-box');
+    box.innerHTML = `<div class="cd bdr"><label class="fl"><span>정산 월</span><input type="month" id="st-ym" value="${st.stYm||ym}"></label><span style="flex:1"></span><button class="btn sm" id="st-xls">엑셀 전체 저장</button></div>` + optBar() +
+      (data.adjMissing ? '<div class="warn">가감 항목을 쓰려면 SQL(young-re-adjust.sql)을 먼저 실행하세요. 지금은 가감 없이 표시됩니다.</div>' : '') +
+      `<div class="cd"><h3>${ymLabel(st.stYm||ym)} 명세서 <span class="chip">${L.length}명</span></h3>${L.length ? `<div class="prl">${L.map((x,i) => { const m = stmtModel(x, st.stYm||ym, o), g = (S.workers.find(k => k.id===x.pay.worker_id)||{}).gender; return `<div class="pr"><div class="pn">${wn(x.pay.worker_name,g)}<span class="muted">근무 ${x.pay.days}일</span><span class="muted">${E(m.tl)} <b style="color:#2c3470">${money(m.total)}</b></span></div><button class="btn line sm" data-sv="${i}">보기</button><button class="btn line sm" data-si="${i}">이미지</button></div>`; }).join('')}</div>` : '<p class="muted">이 달의 기록이 없습니다</p>'}</div>`;
+    bindOpt();
+    $('#st-ym').onchange = e => { st.stYm = e.target.value; draw(); };
+    box.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { cur = L[+b.dataset.sv].pay.worker_id; detail(); window.scrollTo(0,0); });
+    box.querySelectorAll('[data-si]').forEach(b => b.onclick = () => stmtSaveImg(stmtModel(L[+b.dataset.si], st.stYm||ym, o)));
+    $('#st-xls').onclick = () => {
+      if(!L.length){ Y.toast('저장할 내용이 없습니다',1); return; }
+      const wb = XLSX.utils.book_new(), used = new Set(), ms = L.map(x => stmtModel(x, st.stYm||ym, o));
+      const head = ['이름','전화번호','세금 방식','근무일수','총 지급액']; if(o.adj) head.push('가감 합계'); if(o.tax) head.push('소득세','지방소득세','고용보험'); head.push(ms[0].tl);
+      const sumRows = L.map((x,i) => { const p = x.pay, r = [p.worker_name, Y.fmtPhone(p.phone), ms[i].taxType, p.days, p.gross]; if(o.adj) r.push(x.adj.reduce((s,a) => s + a.amount, 0)); if(o.tax) r.push(p.income_tax||0, p.local_tax||0, p.emp_ins||0); r.push(ms[i].total); return r; });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...sumRows]), '요약');
+      ms.forEach(m => { let n = m.name.replace(/[\\\/\?\*\[\]:]/g,'').slice(0,28) || '시트', k = 2; while(used.has(n)) n = m.name.slice(0,26) + k++; used.add(n); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stmtSheetRows(m)), n); });
+      XLSX.writeFile(wb, '명세서_' + (st.stYm||ym) + '.xlsx');
+    };
+  };
+  const detail = () => {
+    const x = data.list.find(k => k.pay.worker_id===cur), box = $('#st-box'); if(!x){ cur = null; list(); return; }
+    const m = stmtModel(x, st.stYm||ym, o);
+    box.innerHTML = `<div class="cd bdr"><button class="btn line sm" id="sd-back">← 목록</button><span style="flex:1"></span><button class="btn line sm" id="sd-print">인쇄 / PDF</button><button class="btn sm" id="sd-img">이미지 저장</button></div>` + optBar() +
+      `<div class="cd">${stmtHtml(m)}</div>` +
+      `<div class="cd"><h3>가감 항목 <span class="muted">(수당은 +, 공제는 −)</span></h3>${data.adjMissing ? '<p class="muted">young-re-adjust.sql을 먼저 실행해야 사용할 수 있습니다.</p>' : `${x.adj.length ? `<div class="prl">${x.adj.map(a => `<div class="pr"><div class="pn"><b>${E(a.label)}</b></div><b class="${a.amount<0?'neg':''}">${money(a.amount)}</b><button class="btn red sm" data-ad="${a.id}">삭제</button></div>`).join('')}</div>` : '<p class="muted">추가한 항목이 없습니다</p>'}
+      <div class="row2" style="margin-top:12px"><label class="fl"><span>항목 이름</span><input id="ad-l" maxlength="20" placeholder="예: 식대, 선지급"></label><div class="fl"><span>구분</span>${cs('ad-s',[{id:'+',name:'지급 +'},{id:'-',name:'공제 −'}],'+')}</div><label class="fl"><span>금액(원)</span><input id="ad-a" type="number" min="0" step="1000"></label></div><div class="msg" id="ad-m"></div><button class="btn sm" id="ad-go" style="margin-top:6px">추가</button>
+      <p class="muted" style="margin-top:10px">가감 항목은 세금 계산에 포함되지 않고 실지급액에만 더하거나 뺍니다.</p>`}</div>`;
+    bindOpt();
+    $('#sd-back').onclick = () => { cur = null; list(); };
+    $('#sd-img').onclick = () => stmtSaveImg(m);
+    $('#sd-print').onclick = () => { document.body.classList.add('printing'); window.print(); setTimeout(() => document.body.classList.remove('printing'), 500); };
+    if(!data.adjMissing){
+      box.querySelectorAll('[data-ad]').forEach(b => b.onclick = async () => { const r = await sb.from('pay_adjustments').delete().eq('id',b.dataset.ad); if(r.error){ Y.toast(errMsg(r.error),1); return; } await draw(); });
+      $('#ad-go').onclick = async () => {
+        const l = $('#ad-l').value.trim(), v = parseInt($('#ad-a').value,10), sgn = $('#ad-s').value === '-' ? -1 : 1, mm = $('#ad-m'); mm.textContent = '';
+        if(!l){ mm.textContent = '항목 이름을 입력하세요'; return; } if(!(v > 0)){ mm.textContent = '금액을 입력하세요'; return; }
+        const r = await sb.from('pay_adjustments').insert({worker_id:cur, ym:st.stYm||ym, label:l, amount:sgn*v}); if(r.error){ mm.textContent = errMsg(r.error); return; }
+        await draw(); Y.toast('추가했습니다');
+      };
+    }
+  };
+  draw();
+}
+
 /* ---------- 항목·단가 ---------- */
 async function pItems(){
   const today = Y.today();
@@ -516,7 +632,7 @@ async function pReset(){
 }
 
 /* ---------- 라우팅 ---------- */
-const PAGES = {board:pBoard,assign:pAssign,qr:pQr,notes:pNotes,query:pQuery,pay:pPay,items:pItems,accounts:pAccounts,reset:pReset};
+const PAGES = {board:pBoard,assign:pAssign,qr:pQr,notes:pNotes,query:pQuery,pay:pPay,stmt:pStmt,items:pItems,accounts:pAccounts,reset:pReset};
 async function route(){
   if(rt){ sb.removeChannel(rt); rt = null; }
   const p = PAGES[(location.hash||'#board').slice(1)] ? (location.hash||'#board').slice(1) : 'board';

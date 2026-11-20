@@ -155,3 +155,12 @@ input[type=date]::-webkit-date-and-time-value,input[type=month]::-webkit-date-an
 .ti{padding:4px 12px;font-size:14.5px}
 .qt summary::after{content:'';width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid #9aa0c0}
 .qt[open] summary::after{content:'';border-top:0;border-bottom:6px solid #9aa0c0}
+
+.sheet{border:1px solid #e1e6fb;border-radius:16px;padding:18px;background:#fff}
+.sh-t{font-size:19px;font-weight:800;color:#1f2547}.sh-n{font-size:17px;font-weight:700;margin:6px 0 12px}.sh-n small{font-weight:500;color:#7d84a8;font-size:13px;margin-left:6px}
+.sheet table{width:100%;border-collapse:collapse;font-size:15px}
+.sheet td{padding:8px 4px;border-top:1px solid #eef0fb}.sheet td.r{text-align:right;white-space:nowrap}
+.sheet .sh-d{margin-bottom:10px;color:#4a5068}.sheet .neg,.neg{color:#c0275a}
+.sheet .tot td{border-top:2px solid #c9d2f5;background:#eef2ff;font-weight:800;font-size:17px;color:#2c3470;padding:12px 8px}
+.seg button.on{font-weight:700}
+@media print{body.printing *{visibility:hidden}body.printing .sheet,body.printing .sheet *{visibility:visible}body.printing .sheet{position:absolute;left:0;top:0;width:100%;border:0}}
