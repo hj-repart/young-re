@@ -25,3 +25,10 @@ body{font-family:Pretendard,-apple-system,'Malgun Gothic',sans-serif;color:#1f25
 .center-card h2{font-size:19px;margin:6px 0 8px}
 .center-card p{font-size:14.5px;color:#6b7194;line-height:1.6;margin:0 0 12px}
 @media (max-width:760px){.auth{flex-direction:column;gap:16px;padding:20px 16px}.auth .logo svg{width:min(170px,44vw)}}
+
+body.dk{}
+.auth .logo .lg{width:min(380px,86vw);height:auto;display:block}
+@media (max-width:760px){.auth .logo .lg{width:min(320px,84vw)}}
+.hlogo{height:30px;width:auto;display:block}
+.hlogo{height:30px;width:auto;display:block}
+.auth .logo{margin-bottom:6px}

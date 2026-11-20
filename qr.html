@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#e6f0ff">
-<title>출퇴근 체크 · YOUNG.Re</title>
-<link rel="manifest" href="manifest.webmanifest?v=4">
-<link rel="apple-touch-icon" href="apple-touch-icon.png?v=4">
+<title>출퇴근 체크 · Zero Refair</title>
+<link rel="manifest" href="manifest.webmanifest?v=5">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=5">
 <link rel="stylesheet" href="style.css">
 <style>
 .q{max-width:420px;margin:0 auto;padding:22px 16px 40px}
-.brand{text-align:center;font-family:'Playfair Display',serif;font-weight:700;font-size:20px;color:#c4912c;margin-bottom:14px}
+.brand{font-feature-settings:'lnum' 1;text-align:center;font-family:'Playfair Display',serif;font-weight:700;font-size:20px;color:#c4912c;margin-bottom:14px}
 .card{background:#fff;border-radius:20px;padding:16px;box-shadow:0 6px 20px rgba(110,120,200,.14)}
 .tile{display:flex;gap:12px;align-items:center;background:#f4f6ff;border-radius:14px;padding:11px 14px;margin-bottom:8px}
 .dot{width:34px;height:34px;border-radius:10px;background:#dfe7ff;color:#4b5bd6;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
@@ -25,7 +25,7 @@
 </head>
 <body>
 <div class="q">
-  <div class="brand">YOUNG.Re</div>
+  <div class="brand"><img src="mark.png?v=5" alt="Zero Refair" style="height:40px"></div>
 
   <section class="card" id="v-loading"><div class="big"><p>확인 중…</p></div></section>
 
@@ -59,8 +59,8 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="config.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="config.js?v=5"></script>
+<script src="app.js?v=5"></script>
 <script>
 (function(){
   const $ = id => document.getElementById(id);
