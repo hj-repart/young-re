@@ -153,6 +153,8 @@ async function pAssign(){
     <div class="row2"><label class="fl"><span>날짜</span><input type="date" id="a-date" value="${st.aDate||Y.today()}"></label>
     <div class="fl"><span>항목${qaBtn('item')}</span>${cs('a-item', activeItems(), st.aItem)}</div>
     <div class="fl"><span>장소${qaBtn('loc')}</span>${cs('a-loc', activeLocs(), st.aLoc, '선택 안 함')}</div></div>
+    <div class="ih"><span>전일 배치</span><span class="acts"><button class="btn line sm" id="a-prev">전일 불러오기</button></span></div>
+    <div class="muted" style="margin:-2px 0 6px">전날의 항목·장소·직원·작업 내용을 선택한 날짜로 복사합니다. 이미 같은 항목으로 배치된 직원은 건너뜁니다.</div>
     <div class="ih"><span>근로자 선택</span><span class="acts"><button class="btn line sm" id="a-all">직원 전체</button><button class="btn line sm" id="a-new">알바 추가</button></span></div>
     <div class="muted" style="margin:-2px 0 4px">이름 색: <span class="gn gm">남자 파랑</span> · <span class="gn gf">여자 빨강</span> · 미정은 회색</div><div id="a-staff">${S.workers.length ? [['직원', S.workers.filter(w => w.is_staff)], ['알바', S.workers.filter(w => !w.is_staff)]].filter(g => g[1].length).map(g => `<div class="muted" style="margin:10px 0 6px">${g[0]} ${g[1].length}명</div><div class="wpg">${g[1].map(w => `<label class="wp ${gcls(w.gender)}"><input type="checkbox" value="${w.id}" data-st="${w.is_staff?1:0}"><span>${E(w.name)}</span></label>`).join('')}</div>`).join('') : '<p class="muted">등록된 근로자가 없습니다. 알바 추가로 등록하거나 직원 가입을 승인하세요.</p>'}</div>
     <div class="ih"><span>처리 방식</span></div>
@@ -169,6 +171,22 @@ async function pAssign(){
     if(error){ $('#a-list').innerHTML = `<div class="warn">${E(error.message)}</div>`; return; }
     $('#a-list').innerHTML = (data||[]).length ? `<div class="tw"><table class="t"><thead><tr><th>직원</th><th>항목</th><th>장소</th><th>작업 내용</th><th></th></tr></thead><tbody>${data.map(r => `<tr><td>${E((r.workers||{}).name)}</td><td>${E((r.items||{}).name)}</td><td>${E((r.locations||{}).name||'-')}</td><td style="white-space:normal">${E(r.task_text||'-')}</td><td><button class="btn red sm" data-del="${r.id}">삭제</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">이 날짜에 부여된 업무가 없습니다</p>';
     $('#a-list').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if(!confirm('이 업무를 삭제할까요?')) return; const r = await sb.from('assignments').delete().eq('id',b.dataset.del); if(r.error) Y.toast(errMsg(r.error),1); else { Y.toast('삭제했습니다'); list(); } });
+  };
+  $('#a-prev').onclick = async () => {
+    const d = $('#a-date').value; if(!d){ Y.toast('날짜를 선택하세요',1); return; }
+    const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() - 1); const pd = t.toISOString().slice(0,10);
+    const q = await sb.from('assignments').select('worker_id,item_id,location_id,task_text').eq('work_date',pd);
+    if(q.error){ Y.toast(errMsg(q.error),1); return; }
+    const src = q.data || [];
+    if(!src.length){ Y.toast(Y.fmtDate(pd) + ' 배치가 없습니다',1); return; }
+    if(!confirm(Y.fmtDate(pd) + ' 배치 ' + src.length + '건을 ' + Y.fmtDate(d) + '로 불러올까요?\n(이미 같은 항목으로 배치된 직원은 건너뜁니다)')) return;
+    const ex = await sb.from('assignments').select('worker_id,item_id').eq('work_date',d);
+    if(ex.error){ Y.toast(errMsg(ex.error),1); return; }
+    const have = new Set((ex.data||[]).map(r => r.worker_id + '|' + r.item_id));
+    const add = src.filter(r => !have.has(r.worker_id + '|' + r.item_id)).map(r => ({work_date:d,worker_id:r.worker_id,item_id:r.item_id,location_id:r.location_id,task_text:r.task_text}));
+    if(add.length){ const r = await sb.from('assignments').upsert(add,{onConflict:'work_date,worker_id,item_id',ignoreDuplicates:true}); if(r.error){ Y.toast(errMsg(r.error),1); return; } }
+    Y.toast(add.length + '건 불러옴' + (src.length - add.length ? ', ' + (src.length - add.length) + '건 건너뜀' : ''));
+    list();
   };
   $('#a-item').onchange = () => { st.aItem = $('#a-item').value; cards(); };
   $('#a-date').onchange = list;
