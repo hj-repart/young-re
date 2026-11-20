@@ -26,6 +26,10 @@ const activeLocs = () => S.locs.filter(l => l.active);
 const monthEnd = ym => new Date(Date.UTC(+ym.slice(0,4), +ym.slice(5,7), 0)).toISOString().slice(0,10);
 const priceOn = (id,d) => { const p = S.prices.find(p => p.item_id===id && String(p.effective_from)<=d); return p ? p.price : 0; };
 const priceFor = (wid,id,d) => { const p = (S.wprices||[]).find(p => p.worker_id===wid && p.item_id===id && String(p.effective_from)<=d); return p ? p.price : priceOn(id,d); };
+const PAYLIST = [{id:'daily',name:'일급'},{id:'weekly',name:'주급'},{id:'monthly',name:'월급'}], PAYNAME = {daily:'일급',weekly:'주급',monthly:'월급'};
+const TAXLIST2 = [{id:'biz33',name:'3.3%'},{id:'none',name:'없음'}];
+const setv = k => +((S.settings||[]).find(x => x.key===k)||{}).value || 0;
+const mondayOf = d => { const t = new Date(d + 'T00:00:00Z'), w = (t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate() - w); return t.toISOString().slice(0,10); };
 const opts = (list, sel, blank) => (blank!=null ? `<option value="">${E(blank)}</option>` : '') + list.map(o => `<option value="${o.id}"${o.id===sel?' selected':''}>${E(o.name)}</option>`).join('');
 const nameOf = (list,id) => (list.find(x => x.id===id)||{}).name || '';
 
@@ -369,7 +373,7 @@ async function pPay(){
   const load = async () => {
     const v = $('#p-ym').value; st.payYm = v;
     const [r, z] = await Promise.all([
-      sb.from('v_month_pay').select('*').eq('ym',v).order('worker_name'),
+      stmtData(v).then(d => ({data:d.list.map(x => x.pay)}), e => ({error:e})),
       sb.from('attendance').select('id',{count:'exact',head:true}).eq('price_applied',0).gte('work_date',v+'-01').lte('work_date',monthEnd(v))]);
     if(r.error){ $('#p-res').innerHTML = `<div class="warn">${E(r.error.message)}</div>`; return; }
     rows = r.data||[];
@@ -398,31 +402,41 @@ async function stmtData(ym){
     sb.from('pay_adjustments').select('*').eq('ym',ym).order('created_at')]);
   if(m.error) throw m.error; if(a.error) throw a.error;
   const byW = new Map();
-  (m.data||[]).forEach(r => byW.set(r.worker_id, {pay:r, days:[], adj:[]}));
+  (m.data||[]).forEach(r => byW.set(r.worker_id, {pay:r, days:[], adj:[], type:'daily'}));
   (a.data||[]).forEach(r => { const x = byW.get(r.worker_id); if(x) x.days.push(r); });
+  S.workers.filter(w => w.pay_type==='weekly' || w.pay_type==='monthly').forEach(w => {
+    const days = (a.data||[]).filter(r => r.worker_id===w.id), wk = [...new Set(days.map(r => mondayOf(r.work_date)))].sort();
+    const wage = w.pay_type==='weekly' ? (w.weekly_wage||0) : (w.monthly_wage||0);
+    if(w.pay_type==='weekly' && !wk.length){ byW.delete(w.id); return; }
+    const lines = w.pay_type==='weekly' ? wk.map((d,i) => [`${i+1}주차 주급`, wage]) : [['월급', wage]];
+    const gross = lines.reduce((t,l) => t + l[1], 0), tt = w.tax_type==='biz33' ? 'biz33' : 'none';
+    const it = tt==='biz33' ? Math.floor(gross * setv('biz_rate')) : 0, lt = Math.floor(it * setv('local_rate') / 10) * 10;
+    byW.set(w.id, {type:w.pay_type, lines, days, adj:[], pay:{worker_id:w.id, worker_name:w.name, phone:w.phone, tax_type:tt, days:days.length, weeks:wk.length, gross, income_tax:it, local_tax:lt, emp_ins:0, net_pay:gross - it - lt}});
+  });
   (j.data||[]).forEach(r => { const x = byW.get(r.worker_id); if(x) x.adj.push(r); });
-  return {list:[...byW.values()], adjMissing: !!j.error};
+  const list = [...byW.values()].sort((p,q) => (p.pay.worker_name||'').localeCompare(q.pay.worker_name||'', 'ko'));
+  return {list, adjMissing: !!j.error};
 }
 function stmtModel(x, ym, o){
   const p = x.pay, yy = +ym.slice(0,4), mm = +ym.slice(5,7), last = new Date(Date.UTC(yy,mm,0)).getUTCDate(), firstDow = new Date(Date.UTC(yy,mm-1,1)).getUTCDay();
   const byItem = new Map(); x.days.forEach(d => { const e = byItem.get(d.item_name) || {n:0,amt:0}; e.n++; e.amt += d.gross; byItem.set(d.item_name, e); });
-  const pay = [...byItem].map(([k,e]) => [k + ' × ' + e.n + '일', e.amt]), ded = [];
+  const pay = x.type==='daily' ? [...byItem].map(([k,e]) => [k + ' × ' + e.n + '일', e.amt]) : x.lines.map(l => l.slice()), ded = [];
   if(o.adj) x.adj.forEach(r => (r.amount >= 0 ? pay : ded).push([r.label, Math.abs(r.amount)]));
   const taxOn = o.tax && p.tax_type !== 'none';
   if(taxOn){ ded.push(['소득세', p.income_tax||0], ['지방소득세', p.local_tax||0]); if(p.emp_ins) ded.push(['고용보험', p.emp_ins]); }
-  const sum = l => l.reduce((t,r) => t + r[1], 0), payT = sum(pay), dedT = sum(ded);
+  const sum = l => l.reduce((t,r) => t + r[1], 0), payT = sum(pay), dedT = sum(ded), sub = x.type==='weekly' ? `주급 · ${p.weeks}주` : x.type==='monthly' ? '월급' : `근무 ${p.days}일`;
   const mark = {}; x.days.forEach(d => { const n = +d.work_date.slice(8,10); mark[n] = (mark[n]||0) + 1; });
   const calc = p.tax_type==='daily' ? '일용근로소득세 = (일당 − 공제액) × 세율 × (1 − 세액공제율), 월 합계 세액이 소액부징수 기준 미만이면 0원. 지방소득세는 소득세의 10%.' : p.tax_type==='biz33' ? '사업소득 3.3% (소득세 3% + 지방소득세 0.3%)' : '세금 공제 없음';
-  return {title:'급여명세서', ym:ymLabel(ym), range:`${ym}-01 ~ ${ym}-${String(last).padStart(2,'0')}`, name:p.worker_name, phone:p.phone, taxType:TAXNAME[p.tax_type]||'', days:p.days,
-    pay, ded, payT, dedT, net:payT - dedT, netLabel: o.tax ? '차인지급액' : '차인지급액(세전)', mark, last, firstDow, showCal:o.mode==='detail', calc: o.tax ? calc : '',
-    showDetail:o.mode==='detail', showTime:!!o.time, rows: o.mode==='detail' ? x.days.map(d => ({date:Y.fmtDate(d.work_date), what:d.item_name + (o.loc && d.location_name ? ' · ' + d.location_name : ''), time:o.time ? Y.fmtDur(d.check_in,d.check_out) : '', amt:d.gross})) : []};
+  return {title:'급여명세서', ym:ymLabel(ym), range:`${ym}-01 ~ ${ym}-${String(last).padStart(2,'0')}`, name:p.worker_name, phone:p.phone, taxType:TAXNAME[p.tax_type]||'', days:p.days, sub, payType:PAYNAME[x.type],
+    pay, ded, payT, dedT, net:payT - dedT, netLabel: o.tax ? '차인지급액' : '차인지급액(세전)', mark, last, firstDow, showCal:o.mode==='detail' && (x.type==='daily' || x.days.length>0), calc: o.tax ? calc : '',
+    showDetail:o.mode==='detail' && x.type==='daily', showTime:!!o.time, rows: o.mode==='detail' && x.type==='daily' ? x.days.map(d => ({date:Y.fmtDate(d.work_date), what:d.item_name + (o.loc && d.location_name ? ' · ' + d.location_name : ''), time:o.time ? Y.fmtDur(d.check_in,d.check_out) : '', amt:d.gross})) : []};
 }
 const WDN = ['일','월','화','수','목','금','토'];
 function stmtHtml(m){
   const n = Math.max(m.pay.length, m.ded.length, 2), pr = i => m.pay[i] ? `<td>${E(m.pay[i][0])}</td><td class="r">${Y.won(m.pay[i][1])}</td>` : '<td></td><td></td>', dr = i => m.ded[i] ? `<td>${E(m.ded[i][0])}</td><td class="r neg">${Y.won(m.ded[i][1])}</td>` : '<td></td><td></td>';
   const cal = []; for(let i=0;i<m.firstDow;i++) cal.push('<i></i>'); for(let d=1; d<=m.last; d++){ const w = (m.firstDow + d - 1) % 7; cal.push(`<i class="${w===0?'su':w===6?'sa':''}${m.mark[d]?' on':''}"><b>${d}</b><span>${m.mark[d]||''}</span></i>`); }
   return `<div class="sheet"><div class="sh-top"><div class="sh-t">${E(m.title)}</div><div class="sh-ym"><small>귀속연월</small>${E(m.ym)}</div></div>
-  <div class="sh-info"><div class="sh-who"><div class="sh-nm">${E(m.name)}</div><div class="sh-sub">${E(m.taxType)} · 근무 ${m.days}일</div><div class="sh-sub">${E(m.range)}</div></div><div class="sh-net"><small>${E(m.netLabel)}</small><b>${Y.won(m.net)}</b><span>지급합계 ${Y.won(m.payT)}</span><span>공제합계 ${Y.won(m.dedT)}</span></div></div>
+  <div class="sh-info"><div class="sh-who"><div class="sh-nm">${E(m.name)}</div><div class="sh-sub">${E(m.taxType)} · ${E(m.sub)}</div><div class="sh-sub">${E(m.range)}</div></div><div class="sh-net"><small>${E(m.netLabel)}</small><b>${Y.won(m.net)}</b><span>지급합계 ${Y.won(m.payT)}</span><span>공제합계 ${Y.won(m.dedT)}</span></div></div>
   <table class="sh-pd"><thead><tr><th colspan="2">지급내역</th><th colspan="2">공제내역</th></tr></thead><tbody>${Array.from({length:n},(_,i) => `<tr>${pr(i)}${dr(i)}</tr>`).join('')}<tr class="sum"><td>지급합계</td><td class="r">${Y.won(m.payT)}</td><td>공제합계</td><td class="r neg">${Y.won(m.dedT)}</td></tr></tbody></table>
   <div class="sh-bar"><span>${E(m.netLabel)}</span><b>${Y.won(m.net)}</b></div>
   ${m.showCal ? `<div class="sh-h">월간 근무현황</div><div class="sh-cal">${WDN.map((w,i) => `<em class="${i===0?'su':i===6?'sa':''}">${w}</em>`).join('')}${cal.join('')}</div>` : ''}
@@ -439,7 +453,7 @@ function stmtCanvas(m){
   x.fillStyle = '#fff'; x.fillRect(0,0,W,H);
   let y = 58; T(m.title, P, y, F(800,32), INK); T('귀속연월', W-P, y-18, F(500,13), '#7d84a8', 'right'); T(m.ym, W-P, y+2, F(700,18), INK, 'right'); y += 16; L(P,y,W-P,y,3,INK);
   y += 22; x.fillStyle = '#f4f6ff'; x.fillRect(P, y, W-2*P, 104);
-  T(m.name, P+18, y+38, F(800,26), INK); T(`${m.taxType} · 근무 ${m.days}일`, P+18, y+64, F(500,15), '#5a6085'); T(m.range, P+18, y+86, F(500,14), '#7d84a8');
+  T(m.name, P+18, y+38, F(800,26), INK); T(`${m.taxType} · ${m.sub}`, P+18, y+64, F(500,15), '#5a6085'); T(m.range, P+18, y+86, F(500,14), '#7d84a8');
   T(m.netLabel, W-P-18, y+28, F(600,14), '#7d84a8', 'right'); T(Y.won(m.net), W-P-18, y+62, F(800,30), '#2c3470', 'right'); T(`지급 ${Y.won(m.payT)}  ·  공제 ${Y.won(m.dedT)}`, W-P-18, y+88, F(500,13), '#7d84a8', 'right');
   y += 104 + 28; const mid = W/2;
   x.fillStyle = '#eef2ff'; x.fillRect(P, y, W-2*P, 36); T('지급내역', P+14, y+24, F(700,16), INK); T('공제내역', mid+14, y+24, F(700,16), INK); y += 36;
@@ -456,7 +470,7 @@ function stmtCanvas(m){
 }
 function stmtSaveImg(m){ const c = stmtCanvas(m), a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `${m.name}_${m.ym}_급여명세서.png`; document.body.append(a); a.click(); a.remove(); }
 function stmtSheetRows(m){
-  const n = Math.max(m.pay.length, m.ded.length), out = [[m.title, '', '귀속연월', m.ym], [m.name, m.taxType, '근무일수', m.days + '일'], ['지급기간', m.range], [], ['지급내역','금액','공제내역','금액']];
+  const n = Math.max(m.pay.length, m.ded.length), out = [[m.title, '', '귀속연월', m.ym], [m.name, m.taxType, '급여 유형', m.payType, '근무일수', m.days + '일'], ['지급기간', m.range], [], ['지급내역','금액','공제내역','금액']];
   for(let i=0;i<n;i++) out.push([m.pay[i]?m.pay[i][0]:'', m.pay[i]?m.pay[i][1]:'', m.ded[i]?m.ded[i][0]:'', m.ded[i]?m.ded[i][1]:'']);
   out.push(['지급합계', m.payT, '공제합계', m.dedT], [m.netLabel, m.net], []);
   if(m.showDetail && m.rows.length){ out.push(m.showTime ? ['일자','항목','근무시간','일당'] : ['일자','항목','일당']); m.rows.forEach(r => out.push(m.showTime ? [r.date,r.what,r.time,r.amt] : [r.date,r.what,r.amt])); }
@@ -481,7 +495,7 @@ async function pStmt(){
     const L = data.list, box = $('#st-box');
     box.innerHTML = `<div class="cd bdr"><label class="fl"><span>정산 월</span><input type="month" id="st-ym" value="${st.stYm||ym}"></label><span style="flex:1"></span><button class="btn sm" id="st-xls">엑셀 전체 저장</button></div>` + optBar() +
       (data.adjMissing ? '<div class="warn">가감 항목을 쓰려면 SQL(young-re-adjust.sql)을 먼저 실행하세요. 지금은 가감 없이 표시됩니다.</div>' : '') +
-      `<div class="cd"><h3>${ymLabel(st.stYm||ym)} 명세서 <span class="chip">${L.length}명</span></h3>${L.length ? `<div class="prl">${L.map((x,i) => { const m = stmtModel(x, st.stYm||ym, o), g = (S.workers.find(k => k.id===x.pay.worker_id)||{}).gender; return `<div class="pr"><div class="pn">${wn(x.pay.worker_name,g)}<span class="muted">근무 ${x.pay.days}일</span><span class="muted">${E(m.netLabel)} <b style="color:#2c3470">${money(m.net)}</b></span></div><button class="btn line sm" data-sv="${i}">보기</button><button class="btn line sm" data-si="${i}">이미지</button></div>`; }).join('')}</div>` : '<p class="muted">이 달의 기록이 없습니다</p>'}</div>`;
+      `<div class="cd"><h3>${ymLabel(st.stYm||ym)} 명세서 <span class="chip">${L.length}명</span></h3>${L.length ? `<div class="prl">${L.map((x,i) => { const m = stmtModel(x, st.stYm||ym, o), g = (S.workers.find(k => k.id===x.pay.worker_id)||{}).gender; return `<div class="pr"><div class="pn">${wn(x.pay.worker_name,g)}<span class="muted">${E(m.sub)}</span><span class="muted">${E(m.netLabel)} <b style="color:#2c3470">${money(m.net)}</b></span></div><button class="btn line sm" data-sv="${i}">보기</button><button class="btn line sm" data-si="${i}">이미지</button></div>`; }).join('')}</div>` : '<p class="muted">이 달의 기록이 없습니다</p>'}</div>`;
     bindOpt();
     $('#st-ym').onchange = e => { st.stYm = e.target.value; draw(); };
     box.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { cur = L[+b.dataset.sv].pay.worker_id; detail(); window.scrollTo(0,0); });
@@ -489,8 +503,8 @@ async function pStmt(){
     $('#st-xls').onclick = () => {
       if(!L.length){ Y.toast('저장할 내용이 없습니다',1); return; }
       const wb = XLSX.utils.book_new(), used = new Set(), ms = L.map(x => stmtModel(x, st.stYm||ym, o));
-      const head = ['이름','전화번호','세금 방식','근무일수','총 지급액']; if(o.adj) head.push('가감 합계'); if(o.tax) head.push('소득세','지방소득세','고용보험'); head.push(ms[0].netLabel);
-      const sumRows = L.map((x,i) => { const p = x.pay, r = [p.worker_name, Y.fmtPhone(p.phone), ms[i].taxType, p.days, p.gross]; if(o.adj) r.push(x.adj.reduce((s,a) => s + a.amount, 0)); if(o.tax) r.push(p.income_tax||0, p.local_tax||0, p.emp_ins||0); r.push(ms[i].net); return r; });
+      const head = ['이름','전화번호','급여 유형','세금 방식','근무일수','총 지급액']; if(o.adj) head.push('가감 합계'); if(o.tax) head.push('소득세','지방소득세','고용보험'); head.push(ms[0].netLabel);
+      const sumRows = L.map((x,i) => { const p = x.pay, r = [p.worker_name, Y.fmtPhone(p.phone), ms[i].payType, ms[i].taxType, p.days, p.gross]; if(o.adj) r.push(x.adj.reduce((s,a) => s + a.amount, 0)); if(o.tax) r.push(p.income_tax||0, p.local_tax||0, p.emp_ins||0); r.push(ms[i].net); return r; });
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...sumRows]), '요약');
       ms.forEach(m => { let n = m.name.replace(/[\\\/\?\*\[\]:]/g,'').slice(0,28) || '시트', k = 2; while(used.has(n)) n = m.name.slice(0,26) + k++; used.add(n); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stmtSheetRows(m)), n); });
       XLSX.writeFile(wb, '명세서_' + (st.stYm||ym) + '.xlsx');
@@ -580,7 +594,7 @@ async function pAccounts(){
   <div class="cd"><h3>승인 대기 <span class="chip wait">${pend.length}명</span></h3>${pend.length ? `<div class="tw"><table class="t"><thead><tr><th>이름</th><th>전화번호</th><th>가입일</th><th></th></tr></thead><tbody>${pend.map(p => `<tr><td>${E(p.name)}</td><td>${Y.fmtPhone(p.phone)}</td><td>${String(p.created_at).slice(0,10)}</td><td><div class="acts"><button class="btn sm" data-ok="${p.id}">승인</button><button class="btn red sm" data-no="${p.id}">거절</button></div></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">승인 대기 중인 가입이 없습니다</p>'}</div>
   <div class="cd"><h3>관리자 <span class="chip work">${admins.length}명</span></h3><div class="prl">${admins.map(p => `<div class="pr"><div class="pn"><b>${E(p.name)}</b><span class="muted">${Y.fmtPhone(p.phone)}</span></div>${me && p.id===me.id ? '<span class="chip">나</span>' : `<button class="btn red sm" data-rv="${p.id}">관리자 해제</button>`}</div>`).join('')}</div></div>
   <div class="cd"><h3>직원 계정</h3>${staff.length ? `<div class="tw"><table class="t"><thead><tr><th>이름</th><th>전화번호</th><th>상태</th><th></th></tr></thead><tbody>${staff.map(p => `<tr><td>${E(p.name)}</td><td>${Y.fmtPhone(p.phone)}</td><td><span class="tag ${p.status==='approved'?'on':'off'}">${p.status==='approved'?'승인됨':'거절됨'}</span></td><td>${p.status==='approved' ? `<div class="acts"><button class="btn line sm" data-gr="${p.id}">관리자로 지정</button><button class="btn red sm" data-no="${p.id}">사용 중지</button></div>` : `<button class="btn sm" data-ok="${p.id}">승인</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">직원 계정이 없습니다</p>'}</div>
-  <div class="cd"><div class="ih"><h3 style="margin:0">근로자 <span class="chip">${S.workers.length}명</span></h3><button class="btn sm" id="w-add">근로자 등록</button></div><p class="muted" style="margin:8px 0 10px">QR로 출퇴근한 알바도 자동으로 등록되고, 여기서 미리 등록할 수도 있습니다. 성별과 세금 방식은 카드에서 고르세요.</p>${S.workers.length ? `<div class="icards wk">${S.workers.map(w => `<div class="ic"><div class="ich"><b class="gn ${gcls(w.gender)}">${E(w.name)}</b><span class="tag">${w.is_staff?'직원':'알바'}</span></div><div class="muted" style="margin:2px 0 8px">${Y.fmtPhone(w.phone)}</div><div class="muted" style="margin-bottom:4px">성별</div>${cs('gd-'+w.id, GLIST, w.gender||'')}<div class="muted" style="margin:10px 0 4px">세금 방식</div>${cs('tx-'+w.id, TAXLIST, w.tax_type)}${(() => { const seen = new Set(), t = Y.today(); const lines = (S.wprices||[]).filter(p => p.worker_id===w.id && String(p.effective_from)<=t && !seen.has(p.item_id) && seen.add(p.item_id)).map(p => `${E((S.items.find(i => i.id===p.item_id)||{}).name||'')} ${Y.won(p.price)}`); return lines.length ? `<div class="muted" style="margin-top:10px">개인 단가: ${lines.join(' · ')}</div>` : ''; })()}<input data-mm="${w.id}" value="${E(w.memo||'')}" maxlength="60" placeholder="메모" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 10px;font:inherit;font-size:14px"><div class="acts" style="margin-top:10px"><button class="btn line sm" data-wp="${w.id}">개인 단가</button><button class="btn line sm" data-wed="${w.id}">이름·번호 수정</button><button class="btn red sm" data-wdel="${w.id}">삭제</button></div></div>`).join('')}</div>` : '<p class="muted">등록된 근로자가 없습니다</p>'}</div>`;
+  <div class="cd"><div class="ih"><h3 style="margin:0">근로자 <span class="chip">${S.workers.length}명</span></h3><button class="btn sm" id="w-add">근로자 등록</button></div><p class="muted" style="margin:8px 0 10px">QR로 출퇴근한 알바도 자동으로 등록되고, 여기서 미리 등록할 수도 있습니다. 성별과 세금 방식은 카드에서 고르세요.</p>${S.workers.length ? `<div class="icards wk">${S.workers.map(w => `<div class="ic"><div class="ich"><b class="gn ${gcls(w.gender)}">${E(w.name)}</b><span class="tag">${w.is_staff?'직원':'알바'}</span></div><div class="muted" style="margin:2px 0 8px">${Y.fmtPhone(w.phone)}</div><div class="muted" style="margin-bottom:4px">성별</div>${cs('gd-'+w.id, GLIST, w.gender||'')}<div class="muted" style="margin:10px 0 4px">급여 유형</div>${cs('pt-'+w.id, PAYLIST, w.pay_type||'daily')}${(w.pay_type||'daily')!=='daily' ? `<label class="fl" style="margin-top:8px"><span>${w.pay_type==='weekly'?'주급':'월급'} 금액(원)</span><input type="number" min="0" step="10000" data-wa="${w.id}" value="${(w.pay_type==='weekly'?w.weekly_wage:w.monthly_wage)||''}" placeholder="금액 입력"></label>` : ''}<div class="muted" style="margin:10px 0 4px">세금 방식</div>${cs('tx-'+w.id, (w.pay_type||'daily')==='daily' ? TAXLIST : TAXLIST2, w.tax_type)}${(() => { const seen = new Set(), t = Y.today(); const lines = (S.wprices||[]).filter(p => p.worker_id===w.id && String(p.effective_from)<=t && !seen.has(p.item_id) && seen.add(p.item_id)).map(p => `${E((S.items.find(i => i.id===p.item_id)||{}).name||'')} ${Y.won(p.price)}`); return lines.length ? `<div class="muted" style="margin-top:10px">개인 단가: ${lines.join(' · ')}</div>` : ''; })()}<input data-mm="${w.id}" value="${E(w.memo||'')}" maxlength="60" placeholder="메모" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 10px;font:inherit;font-size:14px"><div class="acts" style="margin-top:10px">${(w.pay_type||'daily')==='daily' ? `<button class="btn line sm" data-wp="${w.id}">개인 단가</button>` : ''}<button class="btn line sm" data-wed="${w.id}">이름·번호 수정</button><button class="btn red sm" data-wdel="${w.id}">삭제</button></div></div>`).join('')}</div>` : '<p class="muted">등록된 근로자가 없습니다</p>'}</div>`;
   $('#ln-cp').onclick = async () => { try{ await navigator.clipboard.writeText(link); Y.toast('링크를 복사했습니다'); }catch(e){ $('#ln').select(); } };
   const setStatus = async (id, s) => { const r = await sb.from('profiles').update({status:s}).eq('id',id); if(r.error){ Y.toast(errMsg(r.error),1); return; } await loadRefs(); Y.toast(s==='approved'?'승인했습니다':'처리했습니다'); pAccounts(); };
   const setRole = async (id, role) => { const r = await sb.from('profiles').update({role, status:'approved'}).eq('id',id); if(r.error){ Y.toast(errMsg(r.error),1); return; } Y.toast(role==='admin'?'관리자로 지정했습니다':'관리자 권한을 해제했습니다'); pAccounts(); };
@@ -589,6 +603,17 @@ async function pAccounts(){
   main.querySelectorAll('[data-ok]').forEach(b => b.onclick = () => setStatus(b.dataset.ok,'approved'));
   main.querySelectorAll('[data-no]').forEach(b => b.onclick = () => { if(confirm('이 계정을 사용할 수 없게 할까요?')) setStatus(b.dataset.no,'rejected'); });
   S.workers.forEach(w => { const g = $('#gd-'+w.id); if(g) g.onchange = async () => { const r = await sb.from('workers').update({gender:g.value||null}).eq('id',w.id); if(r.error) Y.toast(errMsg(r.error),1); else { w.gender = g.value||null; const b = g.closest('.ic').querySelector('.ich b'); b.className = 'gn ' + gcls(w.gender); Y.toast('저장했습니다'); } }; });
+  const NOPT = '급여 유형용 SQL을 먼저 실행하세요 (young-re-paytype.sql)';
+  S.workers.forEach(w => { const el = $('#pt-'+w.id); if(el) el.onchange = async () => {
+    const v = el.value || 'daily', upd = {pay_type:v}; let note = '';
+    if(v!=='daily' && w.tax_type==='daily'){ upd.tax_type = 'none'; note = ' 세금 방식은 없음으로 바꿨습니다'; }
+    const r = await sb.from('workers').update(upd).eq('id',w.id);
+    if(r.error){ Y.toast(/pay_type|column/.test(r.error.message) ? NOPT : errMsg(r.error),1); pAccounts(); return; }
+    await loadRefs(); Y.toast('저장했습니다.' + note); pAccounts(); }; });
+  main.querySelectorAll('[data-wa]').forEach(inp => inp.onchange = async () => { const w = S.workers.find(x => x.id===inp.dataset.wa), v = inp.value.trim() === '' ? null : parseInt(inp.value,10);
+    if(v !== null && !(v >= 0)){ Y.toast('금액을 숫자로 입력하세요',1); return; }
+    const r = await sb.from('workers').update(w.pay_type==='weekly' ? {weekly_wage:v} : {monthly_wage:v}).eq('id',w.id);
+    if(r.error){ Y.toast(/wage|column/.test(r.error.message) ? NOPT : errMsg(r.error),1); return; } if(w.pay_type==='weekly') w.weekly_wage = v; else w.monthly_wage = v; Y.toast('저장했습니다'); });
   S.workers.forEach(w => { const el = $('#tx-'+w.id); if(el) el.onchange = async () => { const r = await sb.from('workers').update({tax_type:el.value}).eq('id',w.id); if(r.error) Y.toast(errMsg(r.error),1); else { w.tax_type = el.value; Y.toast('저장했습니다'); } }; });
   $('#w-add').onclick = () => modal('근로자 등록', `<label class="fl"><span>이름</span><input id="n-nm" maxlength="20"></label><label class="fl"><span>전화번호</span><input id="n-ph" type="tel" inputmode="numeric" placeholder="010-0000-0000"></label><div class="fl"><span>성별</span>${cs('n-g', GLIST, '')}</div><div class="fl"><span>세금 방식</span>${cs('n-t', TAXLIST, 'daily')}</div>`, async d => {
     const n = d.querySelector('#n-nm').value.trim(), p = Y.digits(d.querySelector('#n-ph').value);
