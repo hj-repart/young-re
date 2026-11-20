@@ -15,14 +15,16 @@ async function loadRefs(){
     sb.from('locations').select('*').order('sort').order('name'),
     sb.from('workers').select('*').order('name'),
     sb.from('item_prices').select('*').order('effective_from',{ascending:false}),
-    sb.from('settings').select('*').order('key')]);
-  const bad = r.find(x => x.error);
+    sb.from('settings').select('*').order('key'),
+    sb.from('worker_prices').select('*').order('effective_from',{ascending:false})]);
+  const bad = r.slice(0,5).find(x => x.error);
   if(bad) Y.toast('데이터를 불러오지 못했습니다: ' + bad.error.message, 1);
-  S.items = r[0].data||[]; S.locs = r[1].data||[]; S.workers = r[2].data||[]; S.prices = r[3].data||[]; S.settings = r[4].data||[];
+  S.items = r[0].data||[]; S.locs = r[1].data||[]; S.workers = r[2].data||[]; S.prices = r[3].data||[]; S.settings = r[4].data||[]; S.wprices = r[5].error ? [] : (r[5].data||[]);
 }
 const activeItems = () => S.items.filter(i => i.active);
 const activeLocs = () => S.locs.filter(l => l.active);
 const priceOn = (id,d) => { const p = S.prices.find(p => p.item_id===id && String(p.effective_from)<=d); return p ? p.price : 0; };
+const priceFor = (wid,id,d) => { const p = (S.wprices||[]).find(p => p.worker_id===wid && p.item_id===id && String(p.effective_from)<=d); return p ? p.price : priceOn(id,d); };
 const opts = (list, sel, blank) => (blank!=null ? `<option value="">${E(blank)}</option>` : '') + list.map(o => `<option value="${o.id}"${o.id===sel?' selected':''}>${E(o.name)}</option>`).join('');
 const nameOf = (list,id) => (list.find(x => x.id===id)||{}).name || '';
 
@@ -67,7 +69,7 @@ function xls(name, header, rows){
 
 function nowFor(date){ return date===Y.today() ? new Date().toISOString() : new Date(date+'T09:00:00+09:00').toISOString(); }
 async function adminIn(w){
-  return sb.from('attendance').insert({worker_id:w.worker_id,work_date:w.work_date,item_id:w.item_id,location_id:w.location_id||null,assignment_id:w.assignment_id||null,check_in:w.check_in||nowFor(w.work_date),price_applied:priceOn(w.item_id,w.work_date),source:'admin'});
+  return sb.from('attendance').insert({worker_id:w.worker_id,work_date:w.work_date,item_id:w.item_id,location_id:w.location_id||null,assignment_id:w.assignment_id||null,check_in:w.check_in||nowFor(w.work_date),price_applied:priceFor(w.worker_id,w.item_id,w.work_date),source:'admin'});
 }
 async function noteCards(box, itemId, onPick){
   if(!itemId){ box.innerHTML = ''; return; }
@@ -187,7 +189,7 @@ async function pAssign(){
     if(error){ $('#a-go').disabled = false; m.textContent = errMsg(error); return; }
     let done = 0;
     if(mode==='in'){
-      const rows = (asg||[]).map(a => ({worker_id:a.worker_id,work_date:date,item_id:item,location_id:loc,assignment_id:a.id,check_in:nowFor(date),price_applied:priceOn(item,date),source:'admin'}));
+      const rows = (asg||[]).map(a => ({worker_id:a.worker_id,work_date:date,item_id:item,location_id:loc,assignment_id:a.id,check_in:nowFor(date),price_applied:priceFor(a.worker_id,item,date),source:'admin'}));
       const x = await sb.from('attendance').upsert(rows,{onConflict:'worker_id,work_date,item_id',ignoreDuplicates:true}).select('id');
       if(x.error){ $('#a-go').disabled = false; m.textContent = '배치는 저장했지만 출근 처리에 실패했습니다: ' + errMsg(x.error); list(); return; }
       done = (x.data||[]).length;
@@ -345,7 +347,7 @@ async function pQuery(){
       if(!w || !day || !item) return '근로자, 근무일, 항목을 선택하세요';
       if(!cin) return '출근 시간을 입력하세요';
       if(cout && cout < cin) return '퇴근 시간이 출근보다 빠릅니다';
-      const price = g('#e-price') !== '' && parseInt(g('#e-price'),10) > 0 ? parseInt(g('#e-price'),10) : priceOn(item, day);
+      const price = g('#e-price') !== '' && parseInt(g('#e-price'),10) > 0 ? parseInt(g('#e-price'),10) : priceFor(w, item, day);
       const r = await sb.from('attendance').insert({worker_id:w,work_date:day,item_id:item,location_id:g('#e-loc')||null,check_in:cin,check_out:cout,price_applied:price,source:'admin',note:g('#e-note')||null});
       if(r.error) return errMsg(r.error); Y.toast('추가했습니다'); load(); return true;
     }, '추가');
@@ -439,7 +441,7 @@ async function pAccounts(){
   <div class="cd"><h3>승인 대기 <span class="chip wait">${pend.length}명</span></h3>${pend.length ? `<div class="tw"><table class="t"><thead><tr><th>이름</th><th>전화번호</th><th>가입일</th><th></th></tr></thead><tbody>${pend.map(p => `<tr><td>${E(p.name)}</td><td>${Y.fmtPhone(p.phone)}</td><td>${String(p.created_at).slice(0,10)}</td><td><div class="acts"><button class="btn sm" data-ok="${p.id}">승인</button><button class="btn red sm" data-no="${p.id}">거절</button></div></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">승인 대기 중인 가입이 없습니다</p>'}</div>
   <div class="cd"><h3>관리자 <span class="chip work">${admins.length}명</span></h3><div class="prl">${admins.map(p => `<div class="pr"><div class="pn"><b>${E(p.name)}</b><span class="muted">${Y.fmtPhone(p.phone)}</span></div>${me && p.id===me.id ? '<span class="chip">나</span>' : `<button class="btn red sm" data-rv="${p.id}">관리자 해제</button>`}</div>`).join('')}</div></div>
   <div class="cd"><h3>직원 계정</h3>${staff.length ? `<div class="tw"><table class="t"><thead><tr><th>이름</th><th>전화번호</th><th>상태</th><th></th></tr></thead><tbody>${staff.map(p => `<tr><td>${E(p.name)}</td><td>${Y.fmtPhone(p.phone)}</td><td><span class="tag ${p.status==='approved'?'on':'off'}">${p.status==='approved'?'승인됨':'거절됨'}</span></td><td>${p.status==='approved' ? `<div class="acts"><button class="btn line sm" data-gr="${p.id}">관리자로 지정</button><button class="btn red sm" data-no="${p.id}">사용 중지</button></div>` : `<button class="btn sm" data-ok="${p.id}">승인</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">직원 계정이 없습니다</p>'}</div>
-  <div class="cd"><div class="ih"><h3 style="margin:0">근로자 <span class="chip">${S.workers.length}명</span></h3><button class="btn sm" id="w-add">근로자 등록</button></div><p class="muted" style="margin:8px 0 10px">QR로 출퇴근한 알바도 자동으로 등록되고, 여기서 미리 등록할 수도 있습니다. 성별과 세금 방식은 카드에서 고르세요.</p>${S.workers.length ? `<div class="icards wk">${S.workers.map(w => `<div class="ic"><div class="ich"><b class="gn ${gcls(w.gender)}">${E(w.name)}</b><span class="tag">${w.is_staff?'직원':'알바'}</span></div><div class="muted" style="margin:2px 0 8px">${Y.fmtPhone(w.phone)}</div><div class="muted" style="margin-bottom:4px">성별</div>${cs('gd-'+w.id, GLIST, w.gender||'')}<div class="muted" style="margin:10px 0 4px">세금 방식</div>${cs('tx-'+w.id, TAXLIST, w.tax_type)}<input data-mm="${w.id}" value="${E(w.memo||'')}" maxlength="60" placeholder="메모" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 10px;font:inherit;font-size:14px"><div class="acts" style="margin-top:10px"><button class="btn line sm" data-wed="${w.id}">이름·번호 수정</button><button class="btn red sm" data-wdel="${w.id}">삭제</button></div></div>`).join('')}</div>` : '<p class="muted">등록된 근로자가 없습니다</p>'}</div>`;
+  <div class="cd"><div class="ih"><h3 style="margin:0">근로자 <span class="chip">${S.workers.length}명</span></h3><button class="btn sm" id="w-add">근로자 등록</button></div><p class="muted" style="margin:8px 0 10px">QR로 출퇴근한 알바도 자동으로 등록되고, 여기서 미리 등록할 수도 있습니다. 성별과 세금 방식은 카드에서 고르세요.</p>${S.workers.length ? `<div class="icards wk">${S.workers.map(w => `<div class="ic"><div class="ich"><b class="gn ${gcls(w.gender)}">${E(w.name)}</b><span class="tag">${w.is_staff?'직원':'알바'}</span></div><div class="muted" style="margin:2px 0 8px">${Y.fmtPhone(w.phone)}</div><div class="muted" style="margin-bottom:4px">성별</div>${cs('gd-'+w.id, GLIST, w.gender||'')}<div class="muted" style="margin:10px 0 4px">세금 방식</div>${cs('tx-'+w.id, TAXLIST, w.tax_type)}${(() => { const seen = new Set(), t = Y.today(); const lines = (S.wprices||[]).filter(p => p.worker_id===w.id && String(p.effective_from)<=t && !seen.has(p.item_id) && seen.add(p.item_id)).map(p => `${E((S.items.find(i => i.id===p.item_id)||{}).name||'')} ${Y.won(p.price)}`); return lines.length ? `<div class="muted" style="margin-top:10px">개인 단가: ${lines.join(' · ')}</div>` : ''; })()}<input data-mm="${w.id}" value="${E(w.memo||'')}" maxlength="60" placeholder="메모" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 10px;font:inherit;font-size:14px"><div class="acts" style="margin-top:10px"><button class="btn line sm" data-wp="${w.id}">개인 단가</button><button class="btn line sm" data-wed="${w.id}">이름·번호 수정</button><button class="btn red sm" data-wdel="${w.id}">삭제</button></div></div>`).join('')}</div>` : '<p class="muted">등록된 근로자가 없습니다</p>'}</div>`;
   $('#ln-cp').onclick = async () => { try{ await navigator.clipboard.writeText(link); Y.toast('링크를 복사했습니다'); }catch(e){ $('#ln').select(); } };
   const setStatus = async (id, s) => { const r = await sb.from('profiles').update({status:s}).eq('id',id); if(r.error){ Y.toast(errMsg(r.error),1); return; } await loadRefs(); Y.toast(s==='approved'?'승인했습니다':'처리했습니다'); pAccounts(); };
   const setRole = async (id, role) => { const r = await sb.from('profiles').update({role, status:'approved'}).eq('id',id); if(r.error){ Y.toast(errMsg(r.error),1); return; } Y.toast(role==='admin'?'관리자로 지정했습니다':'관리자 권한을 해제했습니다'); pAccounts(); };
@@ -455,6 +457,22 @@ async function pAccounts(){
     if(S.workers.some(x => x.phone===p)) return '이미 등록된 전화번호입니다';
     const r = await sb.from('workers').insert({name:n,phone:p,gender:d.querySelector('#n-g').value||null,tax_type:d.querySelector('#n-t').value||'daily'}); if(r.error) return errMsg(r.error);
     await loadRefs(); Y.toast('등록했습니다'); pAccounts(); return true; }, '등록');
+  main.querySelectorAll('[data-wp]').forEach(b => b.onclick = () => { const w = S.workers.find(x => x.id===b.dataset.wp), t = Y.today(), its = S.items.filter(i => i.active);
+    modal(w.name + ' 개인 단가', `<p class="muted" style="margin:0 0 10px">같은 항목이라도 이 사람에게만 다른 일당을 줄 때 입력합니다. 비워 두면 항목 기본 단가가 적용됩니다.</p>
+    <label class="fl"><span>적용 시작일</span><input type="date" id="wp-d" value="${t}"></label>
+    ${its.map(i => { const cur = (S.wprices||[]).find(p => p.worker_id===w.id && p.item_id===i.id && String(p.effective_from)<=t); return `<div class="pr" style="margin-bottom:8px"><div class="pn"><b>${E(i.name)}</b><span class="muted">기본 ${Y.won(priceOn(i.id,t))}${cur ? ' · 현재 개인 ' + Y.won(cur.price) : ''}</span></div><input type="number" min="0" step="1000" data-wi="${i.id}" value="${cur ? cur.price : ''}" placeholder="기본" style="width:120px;height:40px;border-radius:10px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 10px;font:inherit;text-align:right"></div>`; }).join('')}
+    <label class="fl" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="wp-back"><span>적용 시작일 이후 이미 기록된 출근 건도 이 금액으로 바꾸기</span></label>`, async d => {
+      const day = d.querySelector('#wp-d').value; if(!day) return '적용 시작일을 선택하세요';
+      const back = d.querySelector('#wp-back').checked;
+      for(const inp of d.querySelectorAll('[data-wi]')){
+        const item = inp.dataset.wi, v = inp.value.trim(), cur = (S.wprices||[]).find(p => p.worker_id===w.id && p.item_id===item && String(p.effective_from)<=day);
+        if(v === ''){ if(cur){ const r = await sb.from('worker_prices').delete().eq('worker_id',w.id).eq('item_id',item); if(r.error) return errMsg(r.error); if(back){ await sb.from('attendance').update({price_applied:priceOn(item,day)}).eq('worker_id',w.id).eq('item_id',item).gte('work_date',day); } } continue; }
+        const p = parseInt(v,10); if(!(p >= 0)) return '금액을 숫자로 입력하세요';
+        if(cur && cur.price===p && String(cur.effective_from)===day && !back) continue;
+        const r = await sb.from('worker_prices').upsert({worker_id:w.id,item_id:item,price:p,effective_from:day},{onConflict:'worker_id,item_id,effective_from'}); if(r.error) return /worker_prices/.test(r.error.message) ? '개인 단가용 SQL을 먼저 실행하세요 (young-re-workerprice.sql)' : errMsg(r.error);
+        if(back){ const u = await sb.from('attendance').update({price_applied:p}).eq('worker_id',w.id).eq('item_id',item).gte('work_date',day); if(u.error) return errMsg(u.error); }
+      }
+      await loadRefs(); Y.toast('개인 단가를 저장했습니다'); pAccounts(); return true; }, '저장'); });
   main.querySelectorAll('[data-wed]').forEach(b => b.onclick = () => { const w = S.workers.find(x => x.id===b.dataset.wed); modal('근로자 정보 수정', `<label class="fl"><span>이름</span><input id="w-n" value="${E(w.name)}" maxlength="20"></label><label class="fl"><span>전화번호</span><input id="w-p" inputmode="numeric" value="${E(Y.fmtPhone(w.phone))}" ${w.is_staff?'readonly':''}></label>${w.is_staff?'<p class="muted">직원의 전화번호는 로그인 아이디라 여기서 바꿀 수 없습니다. 이름만 수정됩니다.</p>':''}`, async d => {
     const n = d.querySelector('#w-n').value.trim(), p = Y.digits(d.querySelector('#w-p').value);
     if(!n) return '이름을 입력하세요'; if(!w.is_staff && !Y.validPhone(p)) return '전화번호를 정확히 입력하세요';
