@@ -62,7 +62,11 @@
 
   async function route(){
     const p = await YRE.myProfile();
-    if(!p){ show('login'); return; }
+    if(!p){
+      const {data:{session}} = await YRE.sb.auth.getSession();
+      if(session){ msg($('l-msg'), '로그인은 되었지만 계정 정보를 읽지 못했습니다: ' + (YRE.lastError||'알 수 없음')); }
+      show('login'); return;
+    }
     if(p.status==='pending'){ show('pending'); return; }
     if(p.status==='rejected'){ show('rejected'); return; }
     $('n-title').textContent = p.name + '님, 환영합니다';
@@ -81,7 +85,7 @@
     $('l-btn').disabled = true; msg(m,'');
     const {error} = await YRE.sb.auth.signInWithPassword({email: YRE.emailOf(phone), password: pw});
     $('l-btn').disabled = false;
-    if(error){ msg(m, /Invalid login/i.test(error.message) ? '전화번호 또는 비밀번호가 맞지 않습니다' : '로그인하지 못했습니다. 잠시 후 다시 시도하세요'); return; }
+    if(error){ msg(m, /Invalid login/i.test(error.message) ? '전화번호 또는 비밀번호가 맞지 않습니다' : '로그인하지 못했습니다: ' + error.message); return; }
     route();
   };
 
@@ -94,7 +98,7 @@
     $('s-btn').disabled = true; msg(m,'');
     const {data,error} = await YRE.sb.auth.signUp({email: YRE.emailOf(phone), password: pw, options:{data:{name, phone: YRE.digits(phone)}}});
     $('s-btn').disabled = false;
-    if(error){ msg(m, /already|registered/i.test(error.message) ? '이미 가입된 전화번호입니다' : '가입하지 못했습니다. 잠시 후 다시 시도하세요'); return; }
+    if(error){ msg(m, /already|registered/i.test(error.message) ? '이미 가입된 전화번호입니다' : '가입하지 못했습니다: ' + error.message); return; }
     if(!data.session){ msg(m,'가입은 되었지만 자동 로그인에 실패했습니다. 로그인해 주세요', true); return; }
     route();
   };
