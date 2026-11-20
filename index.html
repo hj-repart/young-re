@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e6f0ff">
+<title>YOUNG.Re</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="g1" gradientUnits="userSpaceOnUse" x1="0" y1="14" x2="0" y2="206"><stop offset="0" stop-color="#f3d58a"/><stop offset="0.5" stop-color="#d9a63a"/><stop offset="1" stop-color="#b57d1c"/></linearGradient>
+<linearGradient id="g2" gradientUnits="userSpaceOnUse" x1="60" y1="20" x2="240" y2="240"><stop offset="0" stop-color="#f0cf80"/><stop offset="0.55" stop-color="#d4a032"/><stop offset="1" stop-color="#a8721a"/></linearGradient>
+<symbol id="ye" viewBox="0 0 300 262">
+<path fill-rule="evenodd" fill="url(#g1)" d="M150 8.7 L236.5 36.2 V103.7 C236.5 152.2 198.5 190.2 150 211.3 C101.5 190.2 63.5 152.2 63.5 103.7 V36.2 Z M150 18.8 L72.1 43.5 V104.3 C72.1 148 106.3 182.2 150 201.2 C193.7 182.2 227.9 148 227.9 104.3 V43.5 Z"/>
+<text x="150" y="130" text-anchor="middle" font-family="Great Vibes" font-size="104" fill="url(#g2)" stroke="currentColor" stroke-width="3" paint-order="stroke">YR</text>
+<g fill="#d9a63a" stroke="currentColor" stroke-width="1.5" paint-order="stroke" text-anchor="middle" font-family="sans-serif"><text x="117" y="68" font-size="13">★</text><text x="133" y="62" font-size="16">★</text><text x="150" y="58" font-size="22">★</text><text x="167" y="62" font-size="16">★</text><text x="183" y="68" font-size="13">★</text></g>
+<text x="150" y="244" text-anchor="middle" font-family="Playfair Display" font-weight="700" font-size="36" fill="url(#g2)">YOUNG.Re</text>
+</symbol></defs></svg>
+
+<main class="auth" id="auth">
+  <div class="logo"><svg viewBox="0 0 300 262" role="img" aria-label="YOUNG.Re"><use href="#ye"/></svg></div>
+  <div class="stack" style="max-width:340px">
+
+    <section class="panel" id="v-loading"><div class="center-card"><p>불러오는 중…</p></div></section>
+
+    <section class="panel hide" id="v-login">
+      <div class="field"><label for="l-phone">전화번호</label><input id="l-phone" type="tel" inputmode="numeric" autocomplete="username" placeholder="010-0000-0000"></div>
+      <div class="field"><label for="l-pw">비밀번호</label><input id="l-pw" type="password" autocomplete="current-password" placeholder="비밀번호 입력"></div>
+      <div class="msg" id="l-msg"></div>
+      <button class="btn" id="l-btn">로그인</button>
+      <div class="link">계정이 없으세요? <b id="to-signup">직원 가입</b></div>
+      <div class="note">알바 근무자는 QR 스캔으로 출퇴근합니다</div>
+    </section>
+
+    <section class="panel hide" id="v-signup">
+      <div class="field"><label for="s-name">이름</label><input id="s-name" type="text" autocomplete="name" maxlength="20" placeholder="홍길동"></div>
+      <div class="field"><label for="s-phone">전화번호</label><input id="s-phone" type="tel" inputmode="numeric" autocomplete="username" placeholder="010-0000-0000"></div>
+      <div class="field"><label for="s-pw">비밀번호</label><input id="s-pw" type="password" autocomplete="new-password" placeholder="6자 이상"></div>
+      <div class="field"><label for="s-pw2">비밀번호 확인</label><input id="s-pw2" type="password" autocomplete="new-password" placeholder="한 번 더 입력"></div>
+      <div class="msg" id="s-msg"></div>
+      <button class="btn" id="s-btn">가입 신청</button>
+      <div class="link">이미 계정이 있으세요? <b id="to-login">로그인</b></div>
+      <div class="note">가입 후 관리자 승인이 완료되면 사용할 수 있습니다</div>
+    </section>
+
+    <section class="panel hide" id="v-pending"><div class="center-card"><h2>승인 대기 중</h2><p>가입 신청이 접수되었습니다.<br>관리자가 승인하면 사용할 수 있습니다.</p><button class="btn ghost" data-logout>로그아웃</button></div></section>
+    <section class="panel hide" id="v-rejected"><div class="center-card"><h2>승인되지 않았습니다</h2><p>가입이 승인되지 않았습니다.<br>관리자에게 문의하세요.</p><button class="btn ghost" data-logout>로그아웃</button></div></section>
+    <section class="panel hide" id="v-next"><div class="center-card"><h2 id="n-title"></h2><p id="n-text"></p><button class="btn ghost" data-logout>로그아웃</button></div></section>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const views = ['loading','login','signup','pending','rejected','next'];
+  function show(v){ views.forEach(x => $('v-'+x).classList.toggle('hide', x!==v)); }
+  function msg(el, text, ok){ el.textContent = text||''; el.classList.toggle('ok', !!ok); }
+
+  async function route(){
+    const p = await YRE.myProfile();
+    if(!p){ show('login'); return; }
+    if(p.status==='pending'){ show('pending'); return; }
+    if(p.status==='rejected'){ show('rejected'); return; }
+    $('n-title').textContent = p.name + '님, 환영합니다';
+    $('n-text').textContent = p.role==='admin' ? '관리자 화면은 다음 단계에서 연결됩니다.' : '직원 화면은 다음 단계에서 연결됩니다.';
+    show('next');
+  }
+
+  $('to-signup').onclick = () => { msg($('l-msg')); show('signup'); };
+  $('to-login').onclick = () => { msg($('s-msg')); show('login'); };
+  document.querySelectorAll('[data-logout]').forEach(b => b.onclick = YRE.logout);
+
+  $('l-btn').onclick = async () => {
+    const phone = $('l-phone').value, pw = $('l-pw').value, m = $('l-msg');
+    if(!YRE.validPhone(phone)){ msg(m,'전화번호를 정확히 입력하세요'); return; }
+    if(!pw){ msg(m,'비밀번호를 입력하세요'); return; }
+    $('l-btn').disabled = true; msg(m,'');
+    const {error} = await YRE.sb.auth.signInWithPassword({email: YRE.emailOf(phone), password: pw});
+    $('l-btn').disabled = false;
+    if(error){ msg(m, /Invalid login/i.test(error.message) ? '전화번호 또는 비밀번호가 맞지 않습니다' : '로그인하지 못했습니다. 잠시 후 다시 시도하세요'); return; }
+    route();
+  };
+
+  $('s-btn').onclick = async () => {
+    const name = $('s-name').value.trim(), phone = $('s-phone').value, pw = $('s-pw').value, pw2 = $('s-pw2').value, m = $('s-msg');
+    if(name.length<2){ msg(m,'이름을 입력하세요'); return; }
+    if(!YRE.validPhone(phone)){ msg(m,'전화번호를 정확히 입력하세요'); return; }
+    if(pw.length<6){ msg(m,'비밀번호는 6자 이상 입력하세요'); return; }
+    if(pw!==pw2){ msg(m,'비밀번호가 서로 다릅니다'); return; }
+    $('s-btn').disabled = true; msg(m,'');
+    const {data,error} = await YRE.sb.auth.signUp({email: YRE.emailOf(phone), password: pw, options:{data:{name, phone: YRE.digits(phone)}}});
+    $('s-btn').disabled = false;
+    if(error){ msg(m, /already|registered/i.test(error.message) ? '이미 가입된 전화번호입니다' : '가입하지 못했습니다. 잠시 후 다시 시도하세요'); return; }
+    if(!data.session){ msg(m,'가입은 되었지만 자동 로그인에 실패했습니다. 로그인해 주세요', true); return; }
+    route();
+  };
+
+  [['l-pw','l-btn'],['s-pw2','s-btn']].forEach(([i,b]) => $(i).addEventListener('keydown', e => { if(e.key==='Enter') $(b).click(); }));
+  YRE.sb.auth.getSession().then(route);
+})();
+</script>
+</body>
+</html>
