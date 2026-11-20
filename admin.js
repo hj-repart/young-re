@@ -120,13 +120,32 @@ async function pBoard(){
   rt = sb.channel('att-board').on('postgres_changes',{event:'*',schema:'public',table:'attendance'}, () => load()).on('postgres_changes',{event:'*',schema:'public',table:'assignments'}, () => load()).subscribe();
 }
 
+
+/* 항목·장소 빠른 추가 (업무 부여 / QR 만들기에서 바로 사용) */
+function quickAdd(kind, redraw){
+  if(kind==='item'){
+    modal('항목 추가', `<label class="fl"><span>항목 이름</span><input id="x-n" maxlength="20" placeholder="예: 야간"></label><label class="fl"><span>일당(원)</span><input id="x-p" type="number" min="0" step="1000" placeholder="0"></label><p class="muted">일당은 나중에 항목·단가 메뉴에서 바꿀 수 있습니다.</p>`, async d => {
+      const n = d.querySelector('#x-n').value.trim(), p = parseInt(d.querySelector('#x-p').value,10);
+      if(!n) return '항목 이름을 입력하세요';
+      const r = await sb.from('items').insert({name:n,sort:S.items.length+1}).select('id').single(); if(r.error) return errMsg(r.error);
+      if(p > 0) await sb.from('item_prices').insert({item_id:r.data.id,price:p,effective_from:'2000-01-01'});
+      await loadRefs(); Y.toast('항목을 추가했습니다'); redraw(); return true; }, '추가');
+  } else {
+    modal('장소 추가', `<label class="fl"><span>장소 이름</span><input id="x-n" maxlength="20" placeholder="예: 인천"></label>`, async d => {
+      const n = d.querySelector('#x-n').value.trim(); if(!n) return '장소 이름을 입력하세요';
+      const r = await sb.from('locations').insert({name:n,sort:S.locs.length+1}); if(r.error) return errMsg(r.error);
+      await loadRefs(); Y.toast('장소를 추가했습니다'); redraw(); return true; }, '추가');
+  }
+}
+const qaBtn = k => `<button type="button" class="btn line sm" data-qa="${k}" style="margin-left:8px;min-height:28px;padding:0 10px;font-size:12.5px">+ 추가</button>`;
+
 /* ---------- 업무 부여 ---------- */
 async function pAssign(){
   const staff = S.workers;
   main.innerHTML = `<h1 class="pt">업무 부여</h1><div class="cd"><h3>직원에게 업무 부여</h3>
     <div class="row2"><label class="fl"><span>날짜</span><input type="date" id="a-date" value="${st.aDate||Y.today()}"></label>
-    <div class="fl"><span>항목</span>${cs('a-item', activeItems(), st.aItem)}</div>
-    <div class="fl"><span>장소</span>${cs('a-loc', activeLocs(), st.aLoc, '선택 안 함')}</div></div>
+    <div class="fl"><span>항목${qaBtn('item')}</span>${cs('a-item', activeItems(), st.aItem)}</div>
+    <div class="fl"><span>장소${qaBtn('loc')}</span>${cs('a-loc', activeLocs(), st.aLoc, '선택 안 함')}</div></div>
     <div class="ih"><span>근로자 선택</span><span class="acts"><button class="btn line sm" id="a-all">직원 전체</button><button class="btn line sm" id="a-new">알바 추가</button></span></div>
     <div class="muted" style="margin:-2px 0 4px">이름 색: <span class="gn gm">남자 파랑</span> · <span class="gn gf">여자 빨강</span> · 미정은 회색</div><div id="a-staff">${S.workers.length ? [['직원', S.workers.filter(w => w.is_staff)], ['알바', S.workers.filter(w => !w.is_staff)]].filter(g => g[1].length).map(g => `<div class="muted" style="margin:10px 0 6px">${g[0]} ${g[1].length}명</div><div class="wpg">${g[1].map(w => `<label class="wp ${gcls(w.gender)}"><input type="checkbox" value="${w.id}" data-st="${w.is_staff?1:0}"><span>${E(w.name)}</span></label>`).join('')}</div>`).join('') : '<p class="muted">등록된 근로자가 없습니다. 알바 추가로 등록하거나 직원 가입을 승인하세요.</p>'}</div>
     <div class="ih"><span>처리 방식</span></div>
@@ -151,6 +170,7 @@ async function pAssign(){
   const syncPick = () => document.querySelectorAll('.wp input').forEach(i => i.closest('.wp').classList.toggle('on', i.checked));
   document.querySelectorAll('.wp input').forEach(i => i.onchange = syncPick);
   const all = $('#a-all'); if(all) all.onclick = () => { document.querySelectorAll('#a-staff input[data-st="1"]').forEach(c => c.checked = true); syncPick(); };
+  main.querySelectorAll('[data-qa]').forEach(b => b.onclick = () => quickAdd(b.dataset.qa === 'item' ? 'item' : 'loc', pAssign));
   $('#a-new').onclick = () => modal('알바 추가', `<label class="fl"><span>이름</span><input id="w-name" maxlength="20"></label><label class="fl"><span>전화번호</span><input id="w-phone" type="tel" inputmode="numeric" placeholder="010-0000-0000"></label><div class="fl"><span>성별</span>${cs('w-g', GLIST, '')}</div>`, async d => {
     const n = d.querySelector('#w-name').value.trim(), p = Y.digits(d.querySelector('#w-phone').value);
     if(n.length<2) return '이름을 입력하세요'; if(!Y.validPhone(p)) return '전화번호를 정확히 입력하세요';
@@ -197,8 +217,8 @@ async function pQr(){
   main.innerHTML = `<h1 class="pt">QR 만들기</h1><div class="cd"><h3>새 QR 만들기</h3>
     <p class="muted" style="margin:0 0 10px">QR을 찍는 알바는 여기서 설정한 날짜·항목·장소·작업 내용으로 출퇴근이 기록됩니다.</p>
     <div class="row2"><label class="fl"><span>날짜</span><input type="date" id="q-date" value="${st.qDate||Y.today()}"></label>
-    <div class="fl"><span>항목</span>${cs('q-item', activeItems(), st.qItem)}</div>
-    <div class="fl"><span>장소</span>${cs('q-loc', activeLocs(), st.qLoc, '선택 안 함')}</div></div>
+    <div class="fl"><span>항목${qaBtn('item')}</span>${cs('q-item', activeItems(), st.qItem)}</div>
+    <div class="fl"><span>장소${qaBtn('loc')}</span>${cs('q-loc', activeLocs(), st.qLoc, '선택 안 함')}</div></div>
     <div class="ih"><span>작업 내용</span></div><div class="ncs" id="q-cards"></div>
     <label class="fl"><textarea id="q-task" placeholder="예: 신한 현장 정리"></textarea></label>
     <div class="msg" id="q-msg"></div><button class="btn sm" id="q-go" style="margin-top:6px">QR 만들기</button></div>
@@ -218,6 +238,7 @@ async function pQr(){
   };
   $('#q-item').onchange = () => { st.qItem = $('#q-item').value; cards(); };
   $('#q-fd').onchange = list;
+  main.querySelectorAll('[data-qa]').forEach(b => b.onclick = () => quickAdd(b.dataset.qa === 'item' ? 'item' : 'loc', pQr));
   $('#q-go').onclick = async () => {
     const m = $('#q-msg'); m.textContent = '';
     const date = $('#q-date').value, item = $('#q-item').value, loc = $('#q-loc').value || null, task = $('#q-task').value.trim();
