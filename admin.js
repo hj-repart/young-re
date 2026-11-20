@@ -2,7 +2,7 @@
 const Y = window.YRE, sb = Y.sb, E = Y.esc;
 const $ = s => document.querySelector(s);
 const main = $('#main');
-const NAMES = {board:'상황판',assign:'업무 부여',qr:'QR 만들기',notes:'작업내역',query:'조회',pay:'정산',items:'항목·단가',accounts:'계정'};
+const NAMES = {board:'상황판',assign:'업무 부여',qr:'QR 만들기',notes:'작업내역',query:'조회',pay:'정산',items:'항목·단가',accounts:'계정',reset:'초기화'};
 const TAX = {daily:'일용근로소득',biz33:'3.3% 사업소득',none:'세금 없음'};
 const TAXLIST = [{id:'daily',name:'일용근로'},{id:'biz33',name:'3.3%'},{id:'none',name:'없음'}];
 let S = {items:[],locs:[],workers:[],prices:[],settings:[]};
@@ -202,6 +202,7 @@ async function pAssign(){
 /* ---------- QR 만들기 ---------- */
 function qrUrl(token){ return new URL('qr.html?t=' + token, location.href).href; }
 async function qrImage(token, lines){
+  if(typeof QRCode === 'undefined') throw new Error('QR 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하고 새로고침하세요');
   const c = document.createElement('canvas');
   await QRCode.toCanvas(c, qrUrl(token), {width:300, margin:1, errorCorrectionLevel:'M'});
   const o = document.createElement('canvas'); o.width = 340; o.height = 420;
@@ -224,13 +225,15 @@ async function pQr(){
     <div class="msg" id="q-msg"></div><button class="btn sm" id="q-go" style="margin-top:6px">QR 만들기</button></div>
     <div class="cd"><h3>QR 목록 <span class="muted" id="q-day"></span></h3><label class="fl" style="max-width:200px;margin-bottom:10px"><span>조회 날짜</span><input type="date" id="q-fd" value="${st.qDate||Y.today()}"></label><div class="qrs" id="q-list"></div></div>`;
   const cards = () => noteCards($('#q-cards'), $('#q-item').value, n => { $('#q-task').value = n.content; if(n.location_id && S.locs.find(l=>l.id===n.location_id&&l.active)) $('#q-loc').value = n.location_id; });
-  const list = async () => {
+  const list = async () => { try{ await list0(); }catch(e){ $('#q-list').innerHTML = `<div class="warn">QR 목록을 불러오지 못했습니다: ${E(e.message||String(e))}</div>`; } };
+  const list0 = async () => {
     const d = $('#q-fd').value; $('#q-day').textContent = d ? Y.fmtDate(d) : '';
     const {data,error} = await sb.from('qr_codes').select('id,token,work_date,task_text,active,items(name),locations(name)').eq('work_date',d).order('created_at',{ascending:false});
     if(error){ $('#q-list').innerHTML = `<div class="warn">${E(error.message)}</div>`; return; }
     if(!(data||[]).length){ $('#q-list').innerHTML = '<p class="muted">이 날짜에 만든 QR이 없습니다</p>'; return; }
-    const imgs = await Promise.all(data.map(r => qrImage(r.token, [(r.items||{}).name||'', (r.locations||{}).name||'장소 미지정', Y.fmtDate(r.work_date)])));
-    $('#q-list').innerHTML = data.map((r,i) => `<div class="qc${r.active?'':' off'}"><img src="${imgs[i]}" alt="QR"><div style="margin:8px 0 2px"><b>${E((r.items||{}).name)}</b> · ${E((r.locations||{}).name||'-')} <span class="tag ${r.active?'on':'off'}">${r.active?'사용중':'중지'}</span></div><div class="muted" style="min-height:18px">${E(r.task_text||'')}</div><div class="acts" style="justify-content:center;margin-top:8px"><a class="btn line sm" style="display:inline-flex;align-items:center;text-decoration:none" download="QR_${r.work_date}_${E((r.items||{}).name)}_${E((r.locations||{}).name||'')}.png" href="${imgs[i]}">이미지 저장</a><button class="btn line sm" data-cp="${r.token}">링크 복사</button><button class="btn line sm" data-tg="${r.id}" data-on="${r.active}">${r.active?'사용 중지':'다시 사용'}</button><button class="btn red sm" data-del="${r.id}">삭제</button></div></div>`).join('');
+    let qerr = '';
+    const imgs = await Promise.all(data.map(async r => { try{ return await qrImage(r.token, [(r.items||{}).name||'', (r.locations||{}).name||'장소 미지정', Y.fmtDate(r.work_date)]); }catch(e){ qerr = e && e.message ? e.message : String(e); return ''; } }));
+    $('#q-list').innerHTML = data.map((r,i) => `<div class="qc${r.active?'':' off'}">${imgs[i] ? `<img src="${imgs[i]}" alt="QR">` : `<div class="warn" style="margin:0 0 8px">QR 그림을 만들지 못했습니다${qerr?': '+E(qerr):''}<br><small>아래 링크 복사로 주소는 쓸 수 있습니다</small></div>`}<div style="margin:8px 0 2px"><b>${E((r.items||{}).name)}</b> · ${E((r.locations||{}).name||'-')} <span class="tag ${r.active?'on':'off'}">${r.active?'사용중':'중지'}</span></div><div class="muted" style="min-height:18px">${E(r.task_text||'')}</div><div class="acts" style="justify-content:center;margin-top:8px"><a class="btn line sm" style="display:inline-flex;align-items:center;text-decoration:none" download="QR_${r.work_date}_${E((r.items||{}).name)}_${E((r.locations||{}).name||'')}.png" href="${imgs[i]}">이미지 저장</a><button class="btn line sm" data-cp="${r.token}">링크 복사</button><button class="btn line sm" data-tg="${r.id}" data-on="${r.active}">${r.active?'사용 중지':'다시 사용'}</button><button class="btn red sm" data-del="${r.id}">삭제</button></div></div>`).join('');
     const box = $('#q-list');
     box.querySelectorAll('[data-cp]').forEach(b => b.onclick = async () => { try{ await navigator.clipboard.writeText(qrUrl(b.dataset.cp)); Y.toast('링크를 복사했습니다'); }catch(e){ prompt('링크를 복사하세요', qrUrl(b.dataset.cp)); } });
     box.querySelectorAll('[data-tg]').forEach(b => b.onclick = async () => { const r = await sb.from('qr_codes').update({active: b.dataset.on!=='true'}).eq('id',b.dataset.tg); if(r.error) Y.toast(errMsg(r.error),1); else list(); });
@@ -248,7 +251,7 @@ async function pQr(){
     $('#q-go').disabled = false;
     if(error){ m.textContent = errMsg(error); return; }
     await saveNote(date, item, loc, task);
-    st.qDate = date; st.qItem = item; $('#q-fd').value = date; Y.toast('QR을 만들었습니다'); list(); cards();
+    st.qDate = date; st.qItem = item; $('#q-fd').value = date; Y.toast('QR을 만들었습니다. 아래 QR 목록에서 확인하세요'); await list(); cards(); $('#q-list').scrollIntoView({behavior:'smooth',block:'start'});
   };
   cards(); list();
 }
@@ -469,8 +472,33 @@ async function pAccounts(){
   main.querySelectorAll('[data-mm]').forEach(i => i.onchange = async () => { const r = await sb.from('workers').update({memo:i.value.trim()||null}).eq('id',i.dataset.mm); if(r.error) Y.toast(errMsg(r.error),1); else Y.toast('저장했습니다'); });
 }
 
+
+/* ---------- 초기화 ---------- */
+const RESETS = [
+  {k:'att',  name:'출퇴근 기록', tbl:'attendance',  desc:'모든 출근·퇴근 기록과 일당 정산 내역', run: async () => await sb.from('attendance').delete().not('id','is',null)},
+  {k:'asg',  name:'업무 배치',   tbl:'assignments', desc:'업무 부여로 배치한 내역', run: async () => await sb.from('assignments').delete().not('id','is',null)},
+  {k:'qr',   name:'QR 코드',     tbl:'qr_codes',    desc:'만들어 둔 모든 QR (이미 인쇄한 QR은 더 이상 쓸 수 없음)', run: async () => await sb.from('qr_codes').delete().not('id','is',null)},
+  {k:'note', name:'작업내역',    tbl:'work_notes',  desc:'항목·날짜별 작업내역 카드', run: async () => await sb.from('work_notes').delete().not('id','is',null)},
+  {k:'alba', name:'알바 명단',   tbl:'workers',     filter:q => q.eq('is_staff',false), desc:'알바 근로자 명단. 그 사람들의 출퇴근·배치 기록도 함께 삭제됨', run: async () => await sb.from('workers').delete().eq('is_staff',false)}
+];
+async function pReset(){
+  main.innerHTML = '<h1 class="pt">초기화</h1><div class="cd"><p class="muted">불러오는 중…</p></div>';
+  const cnt = await Promise.all(RESETS.map(async r => { let q = sb.from(r.tbl).select('id',{count:'exact',head:true}); if(r.filter) q = r.filter(q); const x = await q; return x.count ?? 0; }));
+  const total = cnt.reduce((a,b) => a + b, 0);
+  main.innerHTML = `<h1 class="pt">초기화</h1>
+  <div class="cd"><h3>항목별 초기화</h3><p class="muted" style="margin:0 0 12px">지운 데이터는 되돌릴 수 없습니다. 지우기 전에 조회 화면에서 엑셀로 저장해 두세요. 항목·단가, 장소, 세금 설정, 직원 계정은 어느 초기화에서도 지워지지 않습니다.</p>
+  <div class="prl">${RESETS.map((r,i) => `<div class="pr"><div class="pn"><b>${r.name}</b><span class="muted">${r.desc}</span></div><span class="chip ${cnt[i]?'work':''}">${cnt[i]}건</span><button class="btn red sm" data-rs="${i}" ${cnt[i]?'':'disabled'}>초기화</button></div>`).join('')}</div></div>
+  <div class="cd" style="border:1.5px solid #f3c6cf"><h3>전체 초기화</h3><p class="muted" style="margin:0 0 12px">위 5가지(출퇴근 기록, 업무 배치, QR, 작업내역, 알바 명단)를 한 번에 지웁니다. 새로 시작할 때 사용하세요.</p><button class="btn red" id="rs-all" ${total?'':'disabled'}>전체 초기화</button></div>`;
+  const confirmReset = (title, text, run) => modal(title, `<p style="line-height:1.7;margin:0 0 12px">${text}</p><label class="fl"><span>계속하려면 <b>초기화</b>를 입력하세요</span><input id="rs-t" autocomplete="off"></label>`, async d => {
+    if(d.querySelector('#rs-t').value.trim() !== '초기화') return '"초기화"를 정확히 입력하세요';
+    const r = await run(); if(r && r.error) return '지우지 못했습니다: ' + errMsg(r.error);
+    await loadRefs(); Y.toast('초기화했습니다'); pReset(); return true; }, '초기화');
+  main.querySelectorAll('[data-rs]').forEach(b => b.onclick = () => { const r = RESETS[+b.dataset.rs]; confirmReset(r.name + ' 초기화', `<b>${r.name}</b> ${cnt[+b.dataset.rs]}건을 모두 지웁니다.<br>${r.desc}.`, r.run); });
+  $('#rs-all').onclick = () => confirmReset('전체 초기화', `출퇴근 기록, 업무 배치, QR, 작업내역, 알바 명단 <b>${total}건</b>을 모두 지웁니다.`, async () => { for(const r of RESETS){ const x = await r.run(); if(x && x.error) return x; } return null; });
+}
+
 /* ---------- 라우팅 ---------- */
-const PAGES = {board:pBoard,assign:pAssign,qr:pQr,notes:pNotes,query:pQuery,pay:pPay,items:pItems,accounts:pAccounts};
+const PAGES = {board:pBoard,assign:pAssign,qr:pQr,notes:pNotes,query:pQuery,pay:pPay,items:pItems,accounts:pAccounts,reset:pReset};
 async function route(){
   if(rt){ sb.removeChannel(rt); rt = null; }
   const p = PAGES[(location.hash||'#board').slice(1)] ? (location.hash||'#board').slice(1) : 'board';
