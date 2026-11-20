@@ -404,41 +404,63 @@ async function stmtData(ym){
   return {list:[...byW.values()], adjMissing: !!j.error};
 }
 function stmtModel(x, ym, o){
-  const p = x.pay, adjSum = x.adj.reduce((s,r) => s + r.amount, 0), tax = (p.income_tax||0) + (p.local_tax||0) + (p.emp_ins||0);
-  const rows = o.mode==='detail' ? x.days.map(d => ({date:Y.fmtDate(d.work_date), what:d.item_name + (o.loc && d.location_name ? ' · ' + d.location_name : ''), time:o.time ? Y.fmtDur(d.check_in,d.check_out) : '', amt:d.gross})) : [];
-  const sum = [['근무일수', p.days + '일', 0], ['총 지급액', p.gross, 1]];
-  if(o.adj) x.adj.forEach(r => sum.push([r.label, r.amount, 1]));
-  if(o.adj && x.adj.length) sum.push(['가감 합계', adjSum, 1]);
-  let total, tl;
-  if(o.tax && p.tax_type!=='none'){
-    sum.push(['소득세', -(p.income_tax||0), 1], ['지방소득세', -(p.local_tax||0), 1]);
-    if(p.emp_ins) sum.push(['고용보험', -p.emp_ins, 1]);
-    total = p.gross + (o.adj ? adjSum : 0) - tax; tl = '실지급액';
-  } else { total = p.gross + (o.adj ? adjSum : 0); tl = o.tax ? '실지급액' : '지급 합계'; }
-  return {name:p.worker_name, phone:p.phone, taxType:TAXNAME[p.tax_type]||'', title:ymLabel(ym) + ' 급여 명세서', rows, sum, total, tl, showDetail:o.mode==='detail', showTime:!!o.time};
+  const p = x.pay, yy = +ym.slice(0,4), mm = +ym.slice(5,7), last = new Date(Date.UTC(yy,mm,0)).getUTCDate(), firstDow = new Date(Date.UTC(yy,mm-1,1)).getUTCDay();
+  const byItem = new Map(); x.days.forEach(d => { const e = byItem.get(d.item_name) || {n:0,amt:0}; e.n++; e.amt += d.gross; byItem.set(d.item_name, e); });
+  const pay = [...byItem].map(([k,e]) => [k + ' × ' + e.n + '일', e.amt]), ded = [];
+  if(o.adj) x.adj.forEach(r => (r.amount >= 0 ? pay : ded).push([r.label, Math.abs(r.amount)]));
+  const taxOn = o.tax && p.tax_type !== 'none';
+  if(taxOn){ ded.push(['소득세', p.income_tax||0], ['지방소득세', p.local_tax||0]); if(p.emp_ins) ded.push(['고용보험', p.emp_ins]); }
+  const sum = l => l.reduce((t,r) => t + r[1], 0), payT = sum(pay), dedT = sum(ded);
+  const mark = {}; x.days.forEach(d => { const n = +d.work_date.slice(8,10); mark[n] = (mark[n]||0) + 1; });
+  const calc = p.tax_type==='daily' ? '일용근로소득세 = (일당 − 공제액) × 세율 × (1 − 세액공제율), 월 합계 세액이 소액부징수 기준 미만이면 0원. 지방소득세는 소득세의 10%.' : p.tax_type==='biz33' ? '사업소득 3.3% (소득세 3% + 지방소득세 0.3%)' : '세금 공제 없음';
+  return {title:'급여명세서', ym:ymLabel(ym), range:`${ym}-01 ~ ${ym}-${String(last).padStart(2,'0')}`, name:p.worker_name, phone:p.phone, taxType:TAXNAME[p.tax_type]||'', days:p.days,
+    pay, ded, payT, dedT, net:payT - dedT, netLabel: o.tax ? '차인지급액' : '차인지급액(세전)', mark, last, firstDow, showCal:o.mode==='detail', calc: o.tax ? calc : '',
+    showDetail:o.mode==='detail', showTime:!!o.time, rows: o.mode==='detail' ? x.days.map(d => ({date:Y.fmtDate(d.work_date), what:d.item_name + (o.loc && d.location_name ? ' · ' + d.location_name : ''), time:o.time ? Y.fmtDur(d.check_in,d.check_out) : '', amt:d.gross})) : []};
 }
-const stmtHtml = m => `<div class="sheet"><div class="sh-t">${E(m.title)}</div><div class="sh-n">${E(m.name)} <small>${E(m.taxType)}</small></div>
-  ${m.showDetail && m.rows.length ? `<table class="sh-d"><tbody>${m.rows.map(r => `<tr><td>${E(r.date)}</td><td>${E(r.what)}</td>${m.showTime?`<td>${E(r.time)}</td>`:''}<td class="r">${Y.won(r.amt)}</td></tr>`).join('')}</tbody></table>` : ''}
-  <table class="sh-s"><tbody>${m.sum.map(r => `<tr><td>${E(r[0])}</td><td class="r${typeof r[1]==='number' && r[1]<0 ? ' neg' : ''}">${typeof r[1]==='number' ? money(r[1]) : E(r[1])}</td></tr>`).join('')}<tr class="tot"><td>${E(m.tl)}</td><td class="r">${money(m.total)}</td></tr></tbody></table></div>`;
+const WDN = ['일','월','화','수','목','금','토'];
+function stmtHtml(m){
+  const n = Math.max(m.pay.length, m.ded.length, 2), pr = i => m.pay[i] ? `<td>${E(m.pay[i][0])}</td><td class="r">${Y.won(m.pay[i][1])}</td>` : '<td></td><td></td>', dr = i => m.ded[i] ? `<td>${E(m.ded[i][0])}</td><td class="r neg">${Y.won(m.ded[i][1])}</td>` : '<td></td><td></td>';
+  const cal = []; for(let i=0;i<m.firstDow;i++) cal.push('<i></i>'); for(let d=1; d<=m.last; d++){ const w = (m.firstDow + d - 1) % 7; cal.push(`<i class="${w===0?'su':w===6?'sa':''}${m.mark[d]?' on':''}"><b>${d}</b><span>${m.mark[d]||''}</span></i>`); }
+  return `<div class="sheet"><div class="sh-top"><div class="sh-t">${E(m.title)}</div><div class="sh-ym"><small>귀속연월</small>${E(m.ym)}</div></div>
+  <div class="sh-info"><div class="sh-who"><div class="sh-nm">${E(m.name)}</div><div class="sh-sub">${E(m.taxType)} · 근무 ${m.days}일</div><div class="sh-sub">${E(m.range)}</div></div><div class="sh-net"><small>${E(m.netLabel)}</small><b>${Y.won(m.net)}</b><span>지급합계 ${Y.won(m.payT)}</span><span>공제합계 ${Y.won(m.dedT)}</span></div></div>
+  <table class="sh-pd"><thead><tr><th colspan="2">지급내역</th><th colspan="2">공제내역</th></tr></thead><tbody>${Array.from({length:n},(_,i) => `<tr>${pr(i)}${dr(i)}</tr>`).join('')}<tr class="sum"><td>지급합계</td><td class="r">${Y.won(m.payT)}</td><td>공제합계</td><td class="r neg">${Y.won(m.dedT)}</td></tr></tbody></table>
+  <div class="sh-bar"><span>${E(m.netLabel)}</span><b>${Y.won(m.net)}</b></div>
+  ${m.showCal ? `<div class="sh-h">월간 근무현황</div><div class="sh-cal">${WDN.map((w,i) => `<em class="${i===0?'su':i===6?'sa':''}">${w}</em>`).join('')}${cal.join('')}</div>` : ''}
+  ${m.showDetail && m.rows.length ? `<div class="sh-h">근무 내역</div><table class="sh-d"><tbody>${m.rows.map(r => `<tr><td>${E(r.date)}</td><td>${E(r.what)}</td>${m.showTime?`<td>${E(r.time)}</td>`:''}<td class="r">${Y.won(r.amt)}</td></tr>`).join('')}</tbody></table>` : ''}
+  ${m.calc ? `<div class="sh-note">${E(m.calc)}</div>` : ''}</div>`;
+}
 function stmtCanvas(m){
-  const W = 720, rows = m.showDetail ? m.rows : [], H = 190 + rows.length*34 + (rows.length?24:0) + m.sum.length*38 + 80;
-  const c = document.createElement('canvas'), S2 = 2; c.width = W*S2; c.height = H*S2; const x = c.getContext('2d'); x.scale(S2,S2);
+  const W = 800, P = 36, RH = 38, n = Math.max(m.pay.length, m.ded.length, 2), cw = (W - 2*P) / 7, crow = Math.ceil((m.firstDow + m.last) / 7);
+  const H = 120 + 130 + 44 + n*RH + RH + 24 + 70 + (m.showCal ? 50 + 30 + crow*52 : 0) + (m.showDetail && m.rows.length ? 50 + m.rows.length*34 : 0) + (m.calc ? 70 : 0) + 30;
+  const c = document.createElement('canvas'), K = 2; c.width = W*K; c.height = H*K; const x = c.getContext('2d'); x.scale(K,K);
+  const F = (w,sz) => `${w} ${sz}px Pretendard, "Noto Sans KR", "Malgun Gothic", sans-serif`, INK = '#1f2547', LINE = '#c9d2f5';
+  const T = (t, px, py, font, col, al) => { x.font = font; x.fillStyle = col; x.textAlign = al || 'left'; x.fillText(t, px, py); };
+  const L = (x1,y1,x2,y2,w,col) => { x.strokeStyle = col || LINE; x.lineWidth = w || 1; x.beginPath(); x.moveTo(x1,y1); x.lineTo(x2,y2); x.stroke(); };
   x.fillStyle = '#fff'; x.fillRect(0,0,W,H);
-  const F = (w,sz) => `${w} ${sz}px Pretendard, "Noto Sans KR", sans-serif`;
-  let y = 56; x.fillStyle = '#1f2547'; x.font = F(800,26); x.textAlign = 'left'; x.fillText(m.title, 40, y);
-  y += 44; x.font = F(700,22); x.fillText(m.name, 40, y); x.font = F(500,15); x.fillStyle = '#7d84a8'; x.fillText(m.taxType, 40 + x.measureText(m.name).width + 0, y); 
-  x.strokeStyle = '#e1e6fb'; x.lineWidth = 1.5; y += 20; x.beginPath(); x.moveTo(40,y); x.lineTo(W-40,y); x.stroke(); y += 12;
-  rows.forEach(r => { y += 34; x.textAlign = 'left'; x.fillStyle = '#4a5068'; x.font = F(500,16); x.fillText(r.date, 40, y); x.fillStyle = '#1f2547'; x.fillText(r.what, 190, y); if(m.showTime){ x.fillStyle = '#7d84a8'; x.fillText(r.time, 430, y); } x.textAlign = 'right'; x.fillStyle = '#1f2547'; x.fillText(Y.won(r.amt), W-40, y); });
-  if(rows.length){ y += 18; x.beginPath(); x.moveTo(40,y); x.lineTo(W-40,y); x.stroke(); y += 6; }
-  m.sum.forEach(r => { y += 38; x.textAlign = 'left'; x.fillStyle = '#4a5068'; x.font = F(600,17); x.fillText(r[0], 40, y); x.textAlign = 'right'; const neg = typeof r[1]==='number' && r[1]<0; x.fillStyle = neg ? '#c0275a' : '#1f2547'; x.fillText(typeof r[1]==='number' ? money(r[1]) : r[1], W-40, y); });
-  y += 18; x.fillStyle = '#eef2ff'; x.fillRect(32, y, W-64, 52); x.textAlign = 'left'; x.fillStyle = '#2c3470'; x.font = F(800,19); x.fillText(m.tl, 48, y+33); x.textAlign = 'right'; x.font = F(800,24); x.fillText(money(m.total), W-48, y+34);
+  let y = 58; T(m.title, P, y, F(800,32), INK); T('귀속연월', W-P, y-18, F(500,13), '#7d84a8', 'right'); T(m.ym, W-P, y+2, F(700,18), INK, 'right'); y += 16; L(P,y,W-P,y,3,INK);
+  y += 22; x.fillStyle = '#f4f6ff'; x.fillRect(P, y, W-2*P, 104);
+  T(m.name, P+18, y+38, F(800,26), INK); T(`${m.taxType} · 근무 ${m.days}일`, P+18, y+64, F(500,15), '#5a6085'); T(m.range, P+18, y+86, F(500,14), '#7d84a8');
+  T(m.netLabel, W-P-18, y+28, F(600,14), '#7d84a8', 'right'); T(Y.won(m.net), W-P-18, y+62, F(800,30), '#2c3470', 'right'); T(`지급 ${Y.won(m.payT)}  ·  공제 ${Y.won(m.dedT)}`, W-P-18, y+88, F(500,13), '#7d84a8', 'right');
+  y += 104 + 28; const mid = W/2;
+  x.fillStyle = '#eef2ff'; x.fillRect(P, y, W-2*P, 36); T('지급내역', P+14, y+24, F(700,16), INK); T('공제내역', mid+14, y+24, F(700,16), INK); y += 36;
+  for(let i=0;i<n;i++){ L(P,y+RH,W-P,y+RH,1,'#e3e7fa'); if(m.pay[i]){ T(m.pay[i][0], P+14, y+25, F(500,16), '#3a4066'); T(Y.won(m.pay[i][1]), mid-14, y+25, F(600,16), INK, 'right'); } if(m.ded[i]){ T(m.ded[i][0], mid+14, y+25, F(500,16), '#3a4066'); T(Y.won(m.ded[i][1]), W-P-14, y+25, F(600,16), '#c0275a', 'right'); } y += RH; }
+  L(P,y,W-P,y,1.5,LINE); x.fillStyle = '#f8f9ff'; x.fillRect(P, y, W-2*P, RH); T('지급합계', P+14, y+25, F(700,16), INK); T(Y.won(m.payT), mid-14, y+25, F(700,16), INK, 'right'); T('공제합계', mid+14, y+25, F(700,16), INK); T(Y.won(m.dedT), W-P-14, y+25, F(700,16), '#c0275a', 'right'); L(mid, y-n*RH-36, mid, y+RH, 1, LINE); y += RH;
+  L(P,y,W-P,y,1.5,LINE); y += 24; x.fillStyle = '#e4eaff'; x.fillRect(P, y, W-2*P, 56); T(m.netLabel, P+18, y+36, F(800,19), '#2c3470'); T(Y.won(m.net), W-P-18, y+38, F(800,28), '#2c3470', 'right'); y += 56;
+  if(m.showCal){ y += 38; T('월간 근무현황', P, y, F(700,16), INK); y += 14; WDN.forEach((w,i) => T(w, P + cw*i + cw/2, y+18, F(600,13), i===0?'#c0275a':i===6?'#3b57c8':'#7d84a8', 'center')); y += 26;
+    for(let d=1; d<=m.last; d++){ const idx = m.firstDow + d - 1, col = idx % 7, row = Math.floor(idx / 7), cx = P + cw*col, cy = y + row*52; x.strokeStyle = '#e3e7fa'; x.lineWidth = 1; x.strokeRect(cx+1, cy+1, cw-2, 50);
+      if(m.mark[d]){ x.fillStyle = '#e8efff'; x.fillRect(cx+2, cy+2, cw-4, 48); } T(String(d), cx+8, cy+18, F(500,12), col===0?'#c0275a':col===6?'#3b57c8':'#7d84a8'); if(m.mark[d]) T(String(m.mark[d]), cx+cw/2, cy+40, F(800,18), '#2f4fc4', 'center'); }
+    y += crow*52; }
+  if(m.showDetail && m.rows.length){ y += 38; T('근무 내역', P, y, F(700,16), INK); y += 10; m.rows.forEach(r => { y += 34; T(r.date, P+6, y-8, F(500,15), '#4a5068'); T(r.what, P+170, y-8, F(500,15), INK); if(m.showTime) T(r.time, P+450, y-8, F(500,15), '#7d84a8'); T(Y.won(r.amt), W-P-6, y-8, F(600,15), INK, 'right'); L(P,y,W-P,y,1,'#eef0fb'); }); }
+  if(m.calc){ y += 30; x.font = F(500,12); x.fillStyle = '#8b90ad'; x.textAlign = 'left'; const words = m.calc.split(' '); let ln = ''; words.forEach(wd => { if(x.measureText(ln + wd).width > W - 2*P){ T(ln, P, y, F(500,12), '#8b90ad'); y += 18; ln = ''; } ln += wd + ' '; }); T(ln, P, y, F(500,12), '#8b90ad'); }
   return c;
 }
-function stmtSaveImg(m){ const c = stmtCanvas(m), a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `${m.name}_${m.title}.png`; document.body.append(a); a.click(); a.remove(); }
+function stmtSaveImg(m){ const c = stmtCanvas(m), a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `${m.name}_${m.ym}_급여명세서.png`; document.body.append(a); a.click(); a.remove(); }
 function stmtSheetRows(m){
-  const out = [[m.title], [m.name, m.taxType], []];
-  if(m.showDetail && m.rows.length){ out.push(m.showTime ? ['일자','항목','근무시간','일당'] : ['일자','항목','일당']); m.rows.forEach(r => out.push(m.showTime ? [r.date,r.what,r.time,r.amt] : [r.date,r.what,r.amt])); out.push([]); }
-  m.sum.forEach(r => out.push([r[0], r[1]])); out.push([m.tl, m.total]); return out;
+  const n = Math.max(m.pay.length, m.ded.length), out = [[m.title, '', '귀속연월', m.ym], [m.name, m.taxType, '근무일수', m.days + '일'], ['지급기간', m.range], [], ['지급내역','금액','공제내역','금액']];
+  for(let i=0;i<n;i++) out.push([m.pay[i]?m.pay[i][0]:'', m.pay[i]?m.pay[i][1]:'', m.ded[i]?m.ded[i][0]:'', m.ded[i]?m.ded[i][1]:'']);
+  out.push(['지급합계', m.payT, '공제합계', m.dedT], [m.netLabel, m.net], []);
+  if(m.showDetail && m.rows.length){ out.push(m.showTime ? ['일자','항목','근무시간','일당'] : ['일자','항목','일당']); m.rows.forEach(r => out.push(m.showTime ? [r.date,r.what,r.time,r.amt] : [r.date,r.what,r.amt])); }
+  return out;
 }
 async function pStmt(){
   const ym = st.stYm || Y.today().slice(0,7); let o = sopt(), cur = null, data = null;
@@ -459,7 +481,7 @@ async function pStmt(){
     const L = data.list, box = $('#st-box');
     box.innerHTML = `<div class="cd bdr"><label class="fl"><span>정산 월</span><input type="month" id="st-ym" value="${st.stYm||ym}"></label><span style="flex:1"></span><button class="btn sm" id="st-xls">엑셀 전체 저장</button></div>` + optBar() +
       (data.adjMissing ? '<div class="warn">가감 항목을 쓰려면 SQL(young-re-adjust.sql)을 먼저 실행하세요. 지금은 가감 없이 표시됩니다.</div>' : '') +
-      `<div class="cd"><h3>${ymLabel(st.stYm||ym)} 명세서 <span class="chip">${L.length}명</span></h3>${L.length ? `<div class="prl">${L.map((x,i) => { const m = stmtModel(x, st.stYm||ym, o), g = (S.workers.find(k => k.id===x.pay.worker_id)||{}).gender; return `<div class="pr"><div class="pn">${wn(x.pay.worker_name,g)}<span class="muted">근무 ${x.pay.days}일</span><span class="muted">${E(m.tl)} <b style="color:#2c3470">${money(m.total)}</b></span></div><button class="btn line sm" data-sv="${i}">보기</button><button class="btn line sm" data-si="${i}">이미지</button></div>`; }).join('')}</div>` : '<p class="muted">이 달의 기록이 없습니다</p>'}</div>`;
+      `<div class="cd"><h3>${ymLabel(st.stYm||ym)} 명세서 <span class="chip">${L.length}명</span></h3>${L.length ? `<div class="prl">${L.map((x,i) => { const m = stmtModel(x, st.stYm||ym, o), g = (S.workers.find(k => k.id===x.pay.worker_id)||{}).gender; return `<div class="pr"><div class="pn">${wn(x.pay.worker_name,g)}<span class="muted">근무 ${x.pay.days}일</span><span class="muted">${E(m.netLabel)} <b style="color:#2c3470">${money(m.net)}</b></span></div><button class="btn line sm" data-sv="${i}">보기</button><button class="btn line sm" data-si="${i}">이미지</button></div>`; }).join('')}</div>` : '<p class="muted">이 달의 기록이 없습니다</p>'}</div>`;
     bindOpt();
     $('#st-ym').onchange = e => { st.stYm = e.target.value; draw(); };
     box.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { cur = L[+b.dataset.sv].pay.worker_id; detail(); window.scrollTo(0,0); });
@@ -467,8 +489,8 @@ async function pStmt(){
     $('#st-xls').onclick = () => {
       if(!L.length){ Y.toast('저장할 내용이 없습니다',1); return; }
       const wb = XLSX.utils.book_new(), used = new Set(), ms = L.map(x => stmtModel(x, st.stYm||ym, o));
-      const head = ['이름','전화번호','세금 방식','근무일수','총 지급액']; if(o.adj) head.push('가감 합계'); if(o.tax) head.push('소득세','지방소득세','고용보험'); head.push(ms[0].tl);
-      const sumRows = L.map((x,i) => { const p = x.pay, r = [p.worker_name, Y.fmtPhone(p.phone), ms[i].taxType, p.days, p.gross]; if(o.adj) r.push(x.adj.reduce((s,a) => s + a.amount, 0)); if(o.tax) r.push(p.income_tax||0, p.local_tax||0, p.emp_ins||0); r.push(ms[i].total); return r; });
+      const head = ['이름','전화번호','세금 방식','근무일수','총 지급액']; if(o.adj) head.push('가감 합계'); if(o.tax) head.push('소득세','지방소득세','고용보험'); head.push(ms[0].netLabel);
+      const sumRows = L.map((x,i) => { const p = x.pay, r = [p.worker_name, Y.fmtPhone(p.phone), ms[i].taxType, p.days, p.gross]; if(o.adj) r.push(x.adj.reduce((s,a) => s + a.amount, 0)); if(o.tax) r.push(p.income_tax||0, p.local_tax||0, p.emp_ins||0); r.push(ms[i].net); return r; });
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...sumRows]), '요약');
       ms.forEach(m => { let n = m.name.replace(/[\\\/\?\*\[\]:]/g,'').slice(0,28) || '시트', k = 2; while(used.has(n)) n = m.name.slice(0,26) + k++; used.add(n); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stmtSheetRows(m)), n); });
       XLSX.writeFile(wb, '명세서_' + (st.stYm||ym) + '.xlsx');

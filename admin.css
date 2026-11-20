@@ -164,3 +164,32 @@ input[type=date]::-webkit-date-and-time-value,input[type=month]::-webkit-date-an
 .sheet .tot td{border-top:2px solid #c9d2f5;background:#eef2ff;font-weight:800;font-size:17px;color:#2c3470;padding:12px 8px}
 .seg button.on{font-weight:700}
 @media print{body.printing *{visibility:hidden}body.printing .sheet,body.printing .sheet *{visibility:visible}body.printing .sheet{position:absolute;left:0;top:0;width:100%;border:0}}
+
+/* 급여명세서 양식 */
+.sheet{padding:20px;max-width:780px;margin:0 auto}
+.sh-top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #1f2547;padding-bottom:10px}
+.sh-t{font-size:26px;font-weight:800;color:#1f2547}.sh-ym{text-align:right;font-weight:700;color:#1f2547}.sh-ym small{display:block;font-size:11.5px;color:#7d84a8;font-weight:500}
+.sh-info{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;background:#f4f6ff;border-radius:14px;padding:16px;margin:14px 0}
+.sh-nm{font-size:22px;font-weight:800;color:#1f2547}.sh-sub{font-size:13.5px;color:#6b7194;margin-top:3px}
+.sh-net{text-align:right;margin-left:auto}.sh-net small{display:block;font-size:12.5px;color:#7d84a8}.sh-net b{display:block;font-size:26px;color:#2c3470;line-height:1.2}.sh-net span{display:block;font-size:12.5px;color:#7d84a8;margin-top:2px}
+.sheet .sh-pd{border:1px solid #e3e7fa;border-radius:12px;overflow:hidden}
+.sheet .sh-pd th{background:#eef2ff;color:#1f2547;text-align:left;padding:10px 12px;font-size:14.5px}
+.sheet .sh-pd td{padding:9px 12px;border-top:1px solid #eef0fb;font-size:14.5px;width:25%}
+.sheet .sh-pd td:nth-child(2){border-right:1px solid #e3e7fa}
+.sheet .sh-pd .sum td{background:#f8f9ff;font-weight:700;border-top:1.5px solid #c9d2f5}
+.sh-bar{display:flex;justify-content:space-between;align-items:center;background:#e4eaff;border-radius:12px;padding:14px 18px;margin-top:12px;font-weight:800;color:#2c3470}.sh-bar span{font-size:16px}.sh-bar b{font-size:24px}
+.sh-h{font-weight:700;margin:18px 0 8px;color:#1f2547;font-size:15px}
+.sh-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.sh-cal em{font-style:normal;text-align:center;font-size:12.5px;color:#7d84a8;font-weight:600}
+.sh-cal i{font-style:normal;border:1px solid #e3e7fa;border-radius:8px;min-height:46px;padding:4px 6px;display:flex;flex-direction:column;justify-content:space-between}
+.sh-cal i b{font-size:11.5px;font-weight:500;color:#7d84a8}.sh-cal i span{text-align:center;font-weight:800;font-size:16px;color:#2f4fc4}
+.sh-cal i.on{background:#e8efff}.sh-cal .su,.sh-cal .su b{color:#c0275a}.sh-cal .sa,.sh-cal .sa b{color:#3b57c8}
+.sh-note{margin-top:14px;font-size:12px;color:#8b90ad;line-height:1.6}
+.sheet .sh-d td{padding:8px 4px;font-size:14px}
+@media(max-width:560px){.sheet{padding:14px}.sh-t{font-size:22px}.sh-cal i{min-height:40px;padding:3px 4px}.sh-net b{font-size:22px}}
+.sheet .sh-pd{table-layout:auto}
+.sheet .sh-pd td,.sheet .sh-pd th{width:auto;word-break:keep-all;overflow-wrap:normal}
+.sheet .sh-pd td.r{white-space:nowrap;text-align:right}
+@media(max-width:560px){.sheet .sh-pd td,.sheet .sh-pd th{padding:9px 6px;font-size:13.5px}.sheet .sh-pd td.r{font-size:13.5px}}
+@media(max-width:560px){.sheet .sh-pd td{white-space:nowrap}}
+@media(max-width:360px){.sheet{padding:10px}.sheet .sh-pd td,.sheet .sh-pd th{padding:8px 3px;font-size:12px}.sheet .sh-pd td.r{font-size:12px}}
