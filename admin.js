@@ -276,7 +276,7 @@ async function pQuery(){
   const to = Y.today(), q = st.q = st.q || {from: to.slice(0,8)+'01', to, worker:'', item:'', loc:'', view:'person'};
   main.innerHTML = `<h1 class="pt">조회</h1><div class="cd"><div class="row2">
     <label class="fl"><span>시작일</span><input type="date" id="f-from" value="${q.from}"></label><label class="fl"><span>종료일</span><input type="date" id="f-to" value="${q.to}"></label>
-    <div class="fl"><span>사람</span>${cs('f-worker', S.workers, q.worker, '전체')}</div>
+    <div class="fl"><span>사람 <small class="muted">(이름 검색 또는 선택)</small></span><input type="search" id="f-name" placeholder="이름 일부를 입력 (예: 김)" value="${E(q.name||'')}" style="height:42px;border-radius:12px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 12px;font:inherit;font-size:15px;margin-bottom:8px">${cs('f-worker', S.workers, q.worker, '전체')}</div>
     <div class="fl"><span>항목</span>${cs('f-item', S.items, q.item, '전체')}</div>
     <div class="fl"><span>장소</span>${cs('f-loc', S.locs, q.loc, '전체')}</div></div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><div class="seg" id="f-view"><button data-v="person">사람별</button><button data-v="date">일자별</button><button data-v="item">항목별</button></div><span class="sp" style="flex:1"></span><button class="btn line sm" id="f-add">기록 추가</button><button class="btn sm" id="f-xls">엑셀 저장</button></div></div>
@@ -289,7 +289,10 @@ async function pQuery(){
     const groups = new Map(); rows.forEach(r => { const k = keyOf(r); (groups.get(k) || groups.set(k,[]).get(k)).push(r); });
     const keys = [...groups.keys()].sort((a,b) => q.view==='date' ? (a<b?-1:1) : a.localeCompare(b,'ko'));
     const total = rows.reduce((s,r) => s + (r.price_applied||0), 0);
-    $('#f-res').innerHTML = `<div class="tw"><table class="t"><thead><tr><th>일자</th><th>이름</th><th>항목</th><th>장소</th><th>출근</th><th>퇴근</th><th>근무시간</th><th class="r">일당</th><th></th></tr></thead><tbody>${keys.map(k => { const g = groups.get(k), sum = g.reduce((s,r) => s + (r.price_applied||0), 0); return `<tr class="gh"><td colspan="7">${E(k)} · ${g.length}건</td><td class="r">${Y.won(sum)}</td><td></td></tr>` + g.map(r => `<tr><td>${Y.fmtDate(r.work_date)}</td><td>${wn((r.workers||{}).name,(r.workers||{}).gender)}</td><td>${E((r.items||{}).name)}</td><td>${E((r.locations||{}).name||'-')}</td><td>${Y.fmtTime(r.check_in)}</td><td>${r.check_out?Y.fmtTime(r.check_out):'<span class="chip work">근무중</span>'}</td><td>${Y.fmtDur(r.check_in,r.check_out)}</td><td class="r">${Y.won(r.price_applied)}</td><td><div class="acts"><button class="btn line sm" data-ed="${r.id}">수정</button><button class="btn red sm" data-del="${r.id}">삭제</button></div></td></tr>`).join(''); }).join('')}<tr class="tot"><td colspan="7">합계 · ${rows.length}건</td><td class="r">${Y.won(total)}</td><td></td></tr></tbody></table></div>`;
+    const wd = d => { const x = Y.fmtDate(d); return x; };
+    const line = r => { const w = r.workers||{}, main1 = q.view==='date' ? wn(w.name,w.gender) : Y.fmtDate(r.work_date), sub = q.view==='person' ? '' : '';
+      return `<div class="qr"><div class="qm"><b>${main1}</b>${q.view==='item' ? `<span class="qs">${wn(w.name,w.gender)}</span>` : ''}</div><div class="qcc"><span class="ti">${E((r.items||{}).name)}</span>${(r.locations||{}).name?`<span class="tl">${E(r.locations.name)}</span>`:''}</div><details class="qt"><summary>${r.check_out ? Y.fmtDur(r.check_in,r.check_out) : '<span class="chip work">근무중</span>'}</summary><span class="qi">출근 ${Y.fmtTime(r.check_in)} · 퇴근 ${r.check_out?Y.fmtTime(r.check_out):'-'}</span></details><div class="qp">${Y.won(r.price_applied)}</div><div class="acts"><button class="btn line sm" data-ed="${r.id}">수정</button><button class="btn red sm" data-del="${r.id}">삭제</button></div></div>`; };
+    $('#f-res').innerHTML = `<div class="qtot"><span>전체 ${rows.length}건</span><b>${Y.won(total)}</b></div>` + keys.map(k => { const g = groups.get(k), sum = g.reduce((s,r) => s + (r.price_applied||0), 0), w0 = (g[0].workers||{}); const ttl = q.view==='person' ? wn(k,w0.gender) : E(k); return `<div class="qg"><div class="qh"><span class="qn">${ttl}</span><span class="qk">${g.length}건</span><b>${Y.won(sum)}</b></div>${g.map(line).join('')}</div>`; }).join('');
     $('#f-res').querySelectorAll('[data-ed]').forEach(b => b.onclick = () => edit(rows.find(r => r.id===b.dataset.ed)));
     $('#f-res').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if(!confirm('이 출퇴근 기록을 삭제할까요?')) return; const r = await sb.from('attendance').delete().eq('id',b.dataset.del); if(r.error) Y.toast(errMsg(r.error),1); else { Y.toast('삭제했습니다'); load(); } });
   };
@@ -299,7 +302,7 @@ async function pQuery(){
     if(q.worker) b = b.eq('worker_id',q.worker); if(q.item) b = b.eq('item_id',q.item); if(q.loc) b = b.eq('location_id',q.loc);
     const {data,error} = await b;
     if(error){ $('#f-res').innerHTML = `<div class="warn">${E(error.message)}</div>`; return; }
-    rows = data||[]; draw();
+    q.name = $('#f-name').value.trim(); rows = (data||[]).filter(r => !q.name || ((r.workers||{}).name||'').includes(q.name)); draw();
   };
   const edit = a => modal('출퇴근 기록 수정', `<label class="fl"><span>근무일</span><input type="date" id="e-date" value="${String(a.work_date).slice(0,10)}"></label>` + attBody(a), async d => {
     const g = s => d.querySelector(s).value;
@@ -325,6 +328,7 @@ async function pQuery(){
   };
   document.querySelectorAll('#f-view button').forEach(b => b.onclick = () => { q.view = b.dataset.v; draw(); });
   ['f-from','f-to','f-worker','f-item','f-loc'].forEach(id => $('#'+id).onchange = load);
+  $('#f-name').oninput = () => { clearTimeout(window._qn); window._qn = setTimeout(load, 250); };
   $('#f-xls').onclick = () => { if(!rows.length){ Y.toast('저장할 기록이 없습니다',1); return; } xls(`조회_${q.from}_${q.to}`, ['일자','이름','전화번호','항목','장소','출근','퇴근','근무시간','일당'], rows.map(r => [String(r.work_date).slice(0,10),(r.workers||{}).name,Y.fmtPhone((r.workers||{}).phone),(r.items||{}).name,(r.locations||{}).name||'',Y.fmtTime(r.check_in),r.check_out?Y.fmtTime(r.check_out):'',Y.fmtDur(r.check_in,r.check_out),r.price_applied||0])); };
   load();
 }
@@ -411,7 +415,7 @@ async function pAccounts(){
   <div class="cd"><h3>승인 대기 <span class="chip wait">${pend.length}명</span></h3>${pend.length ? `<div class="tw"><table class="t"><thead><tr><th>이름</th><th>전화번호</th><th>가입일</th><th></th></tr></thead><tbody>${pend.map(p => `<tr><td>${E(p.name)}</td><td>${Y.fmtPhone(p.phone)}</td><td>${String(p.created_at).slice(0,10)}</td><td><div class="acts"><button class="btn sm" data-ok="${p.id}">승인</button><button class="btn red sm" data-no="${p.id}">거절</button></div></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">승인 대기 중인 가입이 없습니다</p>'}</div>
   <div class="cd"><h3>관리자 <span class="chip work">${admins.length}명</span></h3><div class="prl">${admins.map(p => `<div class="pr"><div class="pn"><b>${E(p.name)}</b><span class="muted">${Y.fmtPhone(p.phone)}</span></div>${me && p.id===me.id ? '<span class="chip">나</span>' : `<button class="btn red sm" data-rv="${p.id}">관리자 해제</button>`}</div>`).join('')}</div></div>
   <div class="cd"><h3>직원 계정</h3>${staff.length ? `<div class="tw"><table class="t"><thead><tr><th>이름</th><th>전화번호</th><th>상태</th><th></th></tr></thead><tbody>${staff.map(p => `<tr><td>${E(p.name)}</td><td>${Y.fmtPhone(p.phone)}</td><td><span class="tag ${p.status==='approved'?'on':'off'}">${p.status==='approved'?'승인됨':'거절됨'}</span></td><td>${p.status==='approved' ? `<div class="acts"><button class="btn line sm" data-gr="${p.id}">관리자로 지정</button><button class="btn red sm" data-no="${p.id}">사용 중지</button></div>` : `<button class="btn sm" data-ok="${p.id}">승인</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">직원 계정이 없습니다</p>'}</div>
-  <div class="cd"><h3>근로자 세금 방식</h3><p class="muted" style="margin:0 0 10px">QR로 출퇴근한 알바도 여기에 자동으로 등록됩니다. 정산에 쓸 세금 방식을 근로자별로 고르세요.</p>${S.workers.length ? `<div class="icards wk">${S.workers.map(w => `<div class="ic"><div class="ich"><b class="gn ${gcls(w.gender)}">${E(w.name)}</b><span class="tag">${w.is_staff?'직원':'알바'}</span></div><div class="muted" style="margin:2px 0 8px">${Y.fmtPhone(w.phone)}</div><div class="muted" style="margin-bottom:4px">성별</div>${cs('gd-'+w.id, GLIST, w.gender||'')}<div class="muted" style="margin:10px 0 4px">세금 방식</div>${cs('tx-'+w.id, TAXLIST, w.tax_type)}<input data-mm="${w.id}" value="${E(w.memo||'')}" maxlength="60" placeholder="메모" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 10px;font:inherit;font-size:14px"></div>`).join('')}</div>` : '<p class="muted">등록된 근로자가 없습니다</p>'}</div>`;
+  <div class="cd"><h3>근로자 세금 방식</h3><p class="muted" style="margin:0 0 10px">QR로 출퇴근한 알바도 여기에 자동으로 등록됩니다. 정산에 쓸 세금 방식을 근로자별로 고르세요.</p>${S.workers.length ? `<div class="icards wk">${S.workers.map(w => `<div class="ic"><div class="ich"><b class="gn ${gcls(w.gender)}">${E(w.name)}</b><span class="tag">${w.is_staff?'직원':'알바'}</span></div><div class="muted" style="margin:2px 0 8px">${Y.fmtPhone(w.phone)}</div><div class="muted" style="margin-bottom:4px">성별</div>${cs('gd-'+w.id, GLIST, w.gender||'')}<div class="muted" style="margin:10px 0 4px">세금 방식</div>${cs('tx-'+w.id, TAXLIST, w.tax_type)}<input data-mm="${w.id}" value="${E(w.memo||'')}" maxlength="60" placeholder="메모" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:1px solid #e1e6fb;background:#f4f6ff;padding:0 10px;font:inherit;font-size:14px"><div class="acts" style="margin-top:10px"><button class="btn line sm" data-wed="${w.id}">이름·번호 수정</button><button class="btn red sm" data-wdel="${w.id}">삭제</button></div></div>`).join('')}</div>` : '<p class="muted">등록된 근로자가 없습니다</p>'}</div>`;
   $('#ln-cp').onclick = async () => { try{ await navigator.clipboard.writeText(link); Y.toast('링크를 복사했습니다'); }catch(e){ $('#ln').select(); } };
   const setStatus = async (id, s) => { const r = await sb.from('profiles').update({status:s}).eq('id',id); if(r.error){ Y.toast(errMsg(r.error),1); return; } await loadRefs(); Y.toast(s==='approved'?'승인했습니다':'처리했습니다'); pAccounts(); };
   const setRole = async (id, role) => { const r = await sb.from('profiles').update({role, status:'approved'}).eq('id',id); if(r.error){ Y.toast(errMsg(r.error),1); return; } Y.toast(role==='admin'?'관리자로 지정했습니다':'관리자 권한을 해제했습니다'); pAccounts(); };
@@ -421,6 +425,20 @@ async function pAccounts(){
   main.querySelectorAll('[data-no]').forEach(b => b.onclick = () => { if(confirm('이 계정을 사용할 수 없게 할까요?')) setStatus(b.dataset.no,'rejected'); });
   S.workers.forEach(w => { const g = $('#gd-'+w.id); if(g) g.onchange = async () => { const r = await sb.from('workers').update({gender:g.value||null}).eq('id',w.id); if(r.error) Y.toast(errMsg(r.error),1); else { w.gender = g.value||null; const b = g.closest('.ic').querySelector('.ich b'); b.className = 'gn ' + gcls(w.gender); Y.toast('저장했습니다'); } }; });
   S.workers.forEach(w => { const el = $('#tx-'+w.id); if(el) el.onchange = async () => { const r = await sb.from('workers').update({tax_type:el.value}).eq('id',w.id); if(r.error) Y.toast(errMsg(r.error),1); else { w.tax_type = el.value; Y.toast('저장했습니다'); } }; });
+  main.querySelectorAll('[data-wed]').forEach(b => b.onclick = () => { const w = S.workers.find(x => x.id===b.dataset.wed); modal('근로자 정보 수정', `<label class="fl"><span>이름</span><input id="w-n" value="${E(w.name)}" maxlength="20"></label><label class="fl"><span>전화번호</span><input id="w-p" inputmode="numeric" value="${E(Y.fmtPhone(w.phone))}" ${w.is_staff?'readonly':''}></label>${w.is_staff?'<p class="muted">직원의 전화번호는 로그인 아이디라 여기서 바꿀 수 없습니다. 이름만 수정됩니다.</p>':''}`, async d => {
+    const n = d.querySelector('#w-n').value.trim(), p = Y.digits(d.querySelector('#w-p').value);
+    if(!n) return '이름을 입력하세요'; if(!w.is_staff && !Y.validPhone(p)) return '전화번호를 정확히 입력하세요';
+    const upd = {name:n}; if(!w.is_staff) upd.phone = p;
+    const r = await sb.from('workers').update(upd).eq('id',w.id);
+    if(r.error) return /duplicate|unique/i.test(r.error.message) ? '이미 등록된 전화번호입니다' : errMsg(r.error);
+    await loadRefs(); Y.toast('수정했습니다'); pAccounts(); return true; }); });
+  main.querySelectorAll('[data-wdel]').forEach(b => b.onclick = async () => { const w = S.workers.find(x => x.id===b.dataset.wdel);
+    if(w.is_staff){ Y.toast('직원은 위 직원 계정에서 사용 중지하세요',1); return; }
+    const c = await sb.from('attendance').select('id',{count:'exact',head:true}).eq('worker_id',w.id);
+    if(c.count>0){ Y.toast(`출퇴근 기록이 ${c.count}건 있어 삭제할 수 없습니다`,1); return; }
+    if(!confirm(w.name+' 님을 삭제할까요?')) return;
+    const r = await sb.from('workers').delete().eq('id',w.id); if(r.error){ Y.toast(errMsg(r.error),1); return; }
+    await loadRefs(); Y.toast('삭제했습니다'); pAccounts(); });
   main.querySelectorAll('[data-mm]').forEach(i => i.onchange = async () => { const r = await sb.from('workers').update({memo:i.value.trim()||null}).eq('id',i.dataset.mm); if(r.error) Y.toast(errMsg(r.error),1); else Y.toast('저장했습니다'); });
 }
 
