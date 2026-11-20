@@ -439,6 +439,9 @@ async function route(){
   $('#who').textContent = me.name + ' 관리자';
   $('#lo').onclick = Y.logout;
   const tg = () => { document.body.classList.toggle('side-open'); try{ if(innerWidth>=1000) localStorage.setItem('yre_side', document.body.classList.contains('side-open')?'1':'0'); }catch(e){} };
+  let sx=0, sy=0;
+  document.addEventListener('touchstart', e => { sx=e.touches[0].clientX; sy=e.touches[0].clientY; }, {passive:true});
+  document.addEventListener('touchend', e => { if(innerWidth>=1000) return; const t=e.changedTouches[0], dx=t.clientX-sx, dy=Math.abs(t.clientY-sy); if(dy>60 || Math.abs(dx)<60) return; const open=document.body.classList.contains('side-open'); if(dx>0 && !open && sx<40) document.body.classList.add('side-open'); else if(dx<0 && open) document.body.classList.remove('side-open'); }, {passive:true});
   $('#hb').onclick = tg; $('#ov').onclick = () => document.body.classList.remove('side-open');
   try{ if(innerWidth>=1000 && localStorage.getItem('yre_side')!=='0') document.body.classList.add('side-open'); }catch(e){}
   await loadRefs();
