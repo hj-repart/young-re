@@ -143,3 +143,15 @@ input[type=date]::-webkit-date-and-time-value,input[type=month]::-webkit-date-an
 .qr .acts .btn{flex:none;min-height:34px;padding:0 14px;font-size:13.5px}
 .qt .qi{text-align:right}
 }
+
+.ti.c0{background:#dfe9ff;color:#2f4fc4}
+.ti.c1{background:#ffe9c9;color:#a35a00}
+.ti.c2{background:#d6f3e0;color:#1b7a43}
+.ti.c3{background:#eadcff;color:#6a35c2}
+.ti.c4{background:#ffdbe4;color:#c0275a}
+.ti.c5{background:#cdf1f3;color:#0d7480}
+.ti.c6{background:#f3f0b9;color:#7a6c00}
+.ti.c7{background:#e3e6ee;color:#4a5068}
+.ti{padding:4px 12px;font-size:14.5px}
+.qt summary::after{content:'';width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid #9aa0c0}
+.qt[open] summary::after{content:'';border-top:0;border-bottom:6px solid #9aa0c0}
