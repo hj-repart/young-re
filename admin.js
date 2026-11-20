@@ -45,6 +45,11 @@ function xls(name, header, rows){
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '시트1');
   XLSX.writeFile(wb, name + '.xlsx');
 }
+
+function nowFor(date){ return date===Y.today() ? new Date().toISOString() : new Date(date+'T09:00:00+09:00').toISOString(); }
+async function adminIn(w){
+  return sb.from('attendance').insert({worker_id:w.worker_id,work_date:w.work_date,item_id:w.item_id,location_id:w.location_id||null,assignment_id:w.assignment_id||null,check_in:w.check_in||nowFor(w.work_date),price_applied:priceOn(w.item_id,w.work_date),source:'admin'});
+}
 async function noteCards(box, itemId, onPick){
   if(!itemId){ box.innerHTML = ''; return; }
   const {data} = await sb.from('work_notes').select('content,location_id,work_date').eq('item_id',itemId).order('work_date',{ascending:false}).limit(60);
@@ -67,7 +72,7 @@ async function pBoard(){
     const d = $('#bd-date').value || date; st.boardDate = d;
     const [a, g] = await Promise.all([
       sb.from('attendance').select('id,check_in,check_out,price_applied,worker_id,item_id,location_id,workers(name),items(name),locations(name)').eq('work_date',d).order('check_in'),
-      sb.from('assignments').select('id,worker_id,item_id,workers(name),items(name),locations(name)').eq('work_date',d)]);
+      sb.from('assignments').select('id,worker_id,item_id,location_id,task_text,workers(name),items(name),locations(name)').eq('work_date',d)]);
     if(a.error || g.error){ $('#bd').innerHTML = `<div class="warn">불러오지 못했습니다: ${E((a.error||g.error).message)}</div>`; return; }
     const att = a.data||[], key = r => r.worker_id + '|' + r.item_id, have = new Set(att.map(key));
     const wait = (g.data||[]).filter(r => !have.has(key(r)));
@@ -84,7 +89,11 @@ async function pBoard(){
       <div class="met"><div class="l">인건비 (총액)</div><div class="v">${Y.won(cost)}</div></div></div>
       <div class="grid g2"><div class="cd"><h3>항목별 인원</h3>${byItem.size ? [...byItem].map(([k,v]) => `<div class="ih"><span>${E(k)}</span><span class="muted">${v.length}명</span></div><div class="chips">${v.map(x => `<span class="chip ${x.s}">${E(x.n)}${x.s==='wait'?' · 미출근':''}</span>`).join('')}</div>`).join('') : '<p class="muted">기록이 없습니다</p>'}
       <p class="muted" style="margin-top:12px">파랑: 근무중 · 초록: 퇴근 · 노랑: 미출근</p></div>
-      <div class="cd"><h3>장소별 인원</h3>${byLoc.size ? [...byLoc].map(([k,v]) => `<div class="bar"><span class="bl">${E(k)}</span><span class="bt"><i style="width:${Math.round(v/max*100)}%"></i></span><span class="bn">${v}명</span></div>`).join('') : '<p class="muted">기록이 없습니다</p>'}</div></div>`;
+      <div class="cd"><h3>장소별 인원</h3>${byLoc.size ? [...byLoc].map(([k,v]) => `<div class="bar"><span class="bl">${E(k)}</span><span class="bt"><i style="width:${Math.round(v/max*100)}%"></i></span><span class="bn">${v}명</span></div>`).join('') : '<p class="muted">기록이 없습니다</p>'}</div></div>
+      <div class="cd"><h3>직접 처리 <span class="muted">(QR 없이 관리자가 출퇴근 처리)</span></h3>${(wait.length || working) ? `<div class="tw"><table class="t"><tbody>${wait.map(r => `<tr><td>${E((r.workers||{}).name)}</td><td>${E((r.items||{}).name)}${(r.locations||{}).name?' · '+E(r.locations.name):''}</td><td><span class="chip wait">미출근</span></td><td><button class="btn sm" data-in="${r.id}">출근 처리</button></td></tr>`).join('')}${att.filter(r => !r.check_out).map(r => `<tr><td>${E((r.workers||{}).name)}</td><td>${E((r.items||{}).name)}${(r.locations||{}).name?' · '+E(r.locations.name):''}</td><td><span class="chip work">근무중 ${Y.fmtTime(r.check_in)}~</span></td><td><button class="btn line sm" data-out="${r.id}">퇴근 처리</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">처리할 인원이 없습니다. 업무 부여 메뉴에서 배치하거나 조회 메뉴에서 기록을 추가하세요.</p>'}</div>`;
+    const dd = $('#bd-date').value || date;
+    $('#bd').querySelectorAll('[data-in]').forEach(b => b.onclick = async () => { const r = (g.data||[]).find(x => x.id===b.dataset.in); b.disabled = true; const x = await adminIn({worker_id:r.worker_id,work_date:dd,item_id:r.item_id,location_id:r.location_id,assignment_id:r.id}); if(x.error){ Y.toast(errMsg(x.error),1); b.disabled = false; } else { Y.toast('출근 처리했습니다'); load(); } });
+    $('#bd').querySelectorAll('[data-out]').forEach(b => b.onclick = async () => { b.disabled = true; const x = await sb.from('attendance').update({check_out:nowFor(dd)}).eq('id',b.dataset.out); if(x.error){ Y.toast(errMsg(x.error),1); b.disabled = false; } else { Y.toast('퇴근 처리했습니다'); load(); } });
   };
   $('#bd-date').onchange = load;
   $('#bd-today').onclick = () => { $('#bd-date').value = Y.today(); load(); };
@@ -94,13 +103,16 @@ async function pBoard(){
 
 /* ---------- 업무 부여 ---------- */
 async function pAssign(){
-  const staff = S.workers.filter(w => w.is_staff);
+  const staff = S.workers;
   main.innerHTML = `<h1 class="pt">업무 부여</h1><div class="cd"><h3>직원에게 업무 부여</h3>
     <div class="row2"><label class="fl"><span>날짜</span><input type="date" id="a-date" value="${st.aDate||Y.today()}"></label>
     <label class="fl"><span>항목</span><select id="a-item">${opts(activeItems(), st.aItem)}</select></label>
     <label class="fl"><span>장소</span><select id="a-loc">${opts(activeLocs(), st.aLoc, '선택 안 함')}</select></label></div>
-    <div class="ih"><span>직원 선택</span><span class="acts"><button class="btn line sm" id="a-all">전체 선택</button></span></div>
-    ${staff.length ? `<div class="pick" id="a-staff">${staff.map(w => `<label><input type="checkbox" value="${w.id}">${E(w.name)}</label>`).join('')}</div>` : '<p class="muted">승인된 직원이 없습니다. 계정 메뉴에서 가입 승인을 먼저 하세요.</p>'}
+    <div class="ih"><span>근로자 선택 <span class="muted">(직원 + 알바)</span></span><span class="acts"><button class="btn line sm" id="a-all">직원 전체 선택</button><button class="btn line sm" id="a-new">알바 추가</button></span></div>
+    ${staff.length ? `<div class="pick" id="a-staff">${staff.map(w => `<label><input type="checkbox" value="${w.id}" data-st="${w.is_staff?1:0}">${E(w.name)}${w.is_staff?'':' <span class="tag">알바</span>'}</label>`).join('')}</div>` : '<p class="muted">등록된 근로자가 없습니다. 오른쪽 위 알바 추가로 등록하거나 직원 가입을 승인하세요.</p>'}
+    <div class="ih"><span>처리 방식</span></div>
+    <div class="seg" id="a-mode"><button type="button" data-m="plan" class="on">배치만 (직원 앱에 표시)</button><button type="button" data-m="in">배치 + 출근 처리</button></div>
+    <p class="muted" id="a-mh" style="margin:6px 0 0">직원이 앱에서 직접 출근 버튼을 누릅니다.</p>
     <div class="ih"><span>작업 내용</span></div><div class="ncs" id="a-cards"></div>
     <label class="fl"><textarea id="a-task" placeholder="예: 3층 바닥 청소"></textarea></label>
     <div class="msg" id="a-msg"></div><button class="btn sm" id="a-go" style="margin-top:6px">업무 부여</button></div>
@@ -115,7 +127,14 @@ async function pAssign(){
   };
   $('#a-item').onchange = () => { st.aItem = $('#a-item').value; cards(); };
   $('#a-date').onchange = list;
-  const all = $('#a-all'); if(all) all.onclick = () => document.querySelectorAll('#a-staff input').forEach(c => c.checked = true);
+  let mode = 'plan';
+  document.querySelectorAll('#a-mode button').forEach(b => b.onclick = () => { mode = b.dataset.m; document.querySelectorAll('#a-mode button').forEach(x => x.classList.toggle('on', x===b)); $('#a-mh').textContent = mode==='in' ? '선택한 사람을 관리자가 바로 출근 처리합니다. (오늘이면 지금 시각, 다른 날짜면 09:00 기준)' : '직원이 앱에서 직접 출근 버튼을 누릅니다.'; });
+  const all = $('#a-all'); if(all) all.onclick = () => document.querySelectorAll('#a-staff input[data-st="1"]').forEach(c => c.checked = true);
+  $('#a-new').onclick = () => modal('알바 추가', `<label class="fl"><span>이름</span><input id="w-name" maxlength="20"></label><label class="fl"><span>전화번호</span><input id="w-phone" type="tel" inputmode="numeric" placeholder="010-0000-0000"></label>`, async d => {
+    const n = d.querySelector('#w-name').value.trim(), p = Y.digits(d.querySelector('#w-phone').value);
+    if(n.length<2) return '이름을 입력하세요'; if(!Y.validPhone(p)) return '전화번호를 정확히 입력하세요';
+    const r = await sb.from('workers').upsert({name:n,phone:p},{onConflict:'phone',ignoreDuplicates:true}); if(r.error) return errMsg(r.error);
+    await loadRefs(); Y.toast('추가했습니다'); pAssign(); return true; });
   $('#a-go').onclick = async () => {
     const m = $('#a-msg'); m.textContent = '';
     const ids = [...document.querySelectorAll('#a-staff input:checked')].map(c => c.value);
@@ -123,11 +142,18 @@ async function pAssign(){
     if(!date || !item){ m.textContent = '날짜와 항목을 선택하세요'; return; }
     if(!ids.length){ m.textContent = '직원을 선택하세요'; return; }
     $('#a-go').disabled = true;
-    const {error} = await sb.from('assignments').upsert(ids.map(w => ({work_date:date,worker_id:w,item_id:item,location_id:loc,task_text:task||null})), {onConflict:'work_date,worker_id,item_id'});
+    const {data:asg,error} = await sb.from('assignments').upsert(ids.map(w => ({work_date:date,worker_id:w,item_id:item,location_id:loc,task_text:task||null})), {onConflict:'work_date,worker_id,item_id'}).select('id,worker_id');
+    if(error){ $('#a-go').disabled = false; m.textContent = errMsg(error); return; }
+    let done = 0;
+    if(mode==='in'){
+      const rows = (asg||[]).map(a => ({worker_id:a.worker_id,work_date:date,item_id:item,location_id:loc,assignment_id:a.id,check_in:nowFor(date),price_applied:priceOn(item,date),source:'admin'}));
+      const x = await sb.from('attendance').upsert(rows,{onConflict:'worker_id,work_date,item_id',ignoreDuplicates:true}).select('id');
+      if(x.error){ $('#a-go').disabled = false; m.textContent = '배치는 저장했지만 출근 처리에 실패했습니다: ' + errMsg(x.error); list(); return; }
+      done = (x.data||[]).length;
+    }
     $('#a-go').disabled = false;
-    if(error){ m.textContent = errMsg(error); return; }
     await saveNote(date, item, loc, task);
-    st.aItem = item; Y.toast(ids.length + '명에게 업무를 부여했습니다'); document.querySelectorAll('#a-staff input').forEach(c => c.checked = false); list(); cards();
+    st.aItem = item; Y.toast(mode==='in' ? `${ids.length}명 배치, ${done}명 출근 처리했습니다` + (done<ids.length ? ` (${ids.length-done}명은 이미 출근 기록이 있습니다)` : '') : ids.length + '명에게 업무를 부여했습니다'); document.querySelectorAll('#a-staff input').forEach(c => c.checked = false); list(); cards();
   };
   cards(); list();
 }
@@ -254,9 +280,10 @@ async function pQuery(){
     if(error){ $('#f-res').innerHTML = `<div class="warn">${E(error.message)}</div>`; return; }
     rows = data||[]; draw();
   };
-  const edit = a => modal('출퇴근 기록 수정', attBody(a), async d => {
+  const edit = a => modal('출퇴근 기록 수정', `<label class="fl"><span>근무일</span><input type="date" id="e-date" value="${String(a.work_date).slice(0,10)}"></label>` + attBody(a), async d => {
     const g = s => d.querySelector(s).value;
-    const upd = {item_id:g('#e-item'), location_id:g('#e-loc')||null, check_in:Y.fromLocalInput(g('#e-in')), check_out:Y.fromLocalInput(g('#e-out')), price_applied:parseInt(g('#e-price'),10)||0, note:g('#e-note')||null};
+    const upd = {work_date:g('#e-date'), item_id:g('#e-item'), location_id:g('#e-loc')||null, check_in:Y.fromLocalInput(g('#e-in')), check_out:Y.fromLocalInput(g('#e-out')), price_applied:parseInt(g('#e-price'),10)||0, note:g('#e-note')||null};
+    if(!upd.work_date) return '근무일을 입력하세요';
     if(!upd.check_in) return '출근 시간을 입력하세요';
     if(upd.check_out && upd.check_out < upd.check_in) return '퇴근 시간이 출근보다 빠릅니다';
     const r = await sb.from('attendance').update(upd).eq('id',a.id);
