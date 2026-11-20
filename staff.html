@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e6f0ff">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>내 근무 · YOUNG.Re</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="admin.css">
+<style>
+.sw{max-width:460px;margin:0 auto;padding:16px 16px 50px}
+.hd{display:flex;align-items:center;gap:10px;margin-bottom:14px}.hd .nm{font-family:'Playfair Display',serif;font-weight:700;font-size:20px;color:#c4912c}.hd .sp{flex:1}
+.hello{font-size:19px;font-weight:700;margin:2px 0 4px}.sub2{font-size:13.5px;color:#7d84a8;margin-bottom:12px}
+.job{background:#fff;border-radius:18px;padding:16px;box-shadow:0 4px 16px rgba(110,120,200,.12);margin-bottom:12px}
+.job .it{font-size:20px;font-weight:700}.job .lc{font-size:14px;color:#6b7194;margin:2px 0 8px}
+.job .tk{background:#f4f6ff;border-radius:12px;padding:10px 12px;font-size:14.5px;line-height:1.5;margin-bottom:10px}
+.job .tm{display:flex;gap:16px;font-size:14px;color:#4a5073;margin-bottom:10px}
+.none{text-align:center;padding:26px 10px;color:#7d84a8;font-size:15px}
+.big{width:100%;height:54px;border:0;border-radius:15px;background:linear-gradient(135deg,#5b8def,#7a6cf0);color:#fff;font:inherit;font-size:17px;font-weight:700;cursor:pointer}
+.big.out{background:linear-gradient(135deg,#f08a5d,#e5604f)}.big:disabled{background:#d9dcec;color:#fff}
+.mon{display:flex;gap:8px;align-items:flex-end;margin-bottom:10px}
+.sum2{display:flex;gap:10px;margin-bottom:10px}.sum2 div{flex:1;background:#f4f6ff;border-radius:12px;padding:10px;text-align:center}.sum2 b{display:block;font-size:19px;color:#4b5bd6}.sum2 span{font-size:12px;color:#7d84a8}
+.hr{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid #eef0fb;font-size:14px}.hr .a{font-weight:600}.hr .b{font-size:12.5px;color:#7d84a8}
+</style>
+</head>
+<body>
+<div class="sw">
+  <div class="hd"><span class="nm">YOUNG.Re</span><span class="sp"></span><button class="sbtn" id="lo">로그아웃</button></div>
+  <div class="hello" id="hello"></div><div class="sub2" id="today"></div>
+  <div id="jobs"><div class="job"><div class="none">불러오는 중…</div></div></div>
+  <div class="cd" style="margin-top:6px"><h3>내 근무 내역</h3>
+    <div class="mon"><label class="fl" style="flex:1"><span>조회 월</span><input type="month" id="ym"></label></div>
+    <div class="sum2"><div><b id="s-d">0</b><span>근무일수</span></div><div><b id="s-h">0</b><span>총 근무시간</span></div></div>
+    <div id="hist"></div></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+(function(){
+  const Y = window.YRE, sb = Y.sb, E = Y.esc, $ = s => document.querySelector(s);
+  async function jobs(){
+    const {data,error} = await sb.rpc('my_today');
+    const box = $('#jobs');
+    if(error){ box.innerHTML = `<div class="job"><div class="none">불러오지 못했습니다<br>${E(error.message)}</div></div>`; return; }
+    if(!data || !data.length){ box.innerHTML = '<div class="job"><div class="none">오늘 부여된 업무 없음</div><button class="big" disabled>출근 / 퇴근</button></div>'; return; }
+    box.innerHTML = data.map(j => {
+      const state = j.check_out ? 'done' : (j.check_in ? 'in' : 'new');
+      return `<div class="job"><div class="it">${E(j.item)}</div><div class="lc">${E(j.location||'장소 미지정')}</div>${j.task?`<div class="tk">${E(j.task)}</div>`:''}<div class="tm"><span>출근 ${Y.fmtTime(j.check_in)}</span><span>퇴근 ${Y.fmtTime(j.check_out)}</span></div><button class="big ${state==='in'?'out':''}" data-a="${j.assignment_id}" ${state==='done'?'disabled':''}>${state==='new'?'출근하기':state==='in'?'퇴근하기':'오늘 근무 완료'}</button></div>`;
+    }).join('');
+    box.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      const r = await sb.rpc('staff_check',{p_assignment:b.dataset.a});
+      if(r.error || !r.data || !r.data.ok){ Y.toast('처리하지 못했습니다. 다시 시도하세요',1); b.disabled = false; return; }
+      const s = r.data.status;
+      Y.toast(s==='in'?'출근 처리되었습니다':s==='out'?'퇴근 처리되었습니다':s==='too_soon'?'출근 1분 뒤부터 퇴근할 수 있습니다':'이미 완료되었습니다', s==='too_soon');
+      jobs(); hist();
+    });
+  }
+  async function hist(){
+    const ym = $('#ym').value, from = ym+'-01', to = ym+'-31';
+    const {data,error} = await sb.rpc('my_history',{p_from:from,p_to:to});
+    if(error){ $('#hist').innerHTML = `<p class="muted">${E(error.message)}</p>`; return; }
+    const rows = data||[]; const mins = rows.reduce((s,r) => s + (r.minutes||0), 0);
+    $('#s-d').textContent = new Set(rows.map(r => r.work_date)).size + '일';
+    $('#s-h').textContent = Math.floor(mins/60) + '시간 ' + (mins%60) + '분';
+    $('#hist').innerHTML = rows.length ? rows.map(r => `<div class="hr"><div><div class="a">${Y.fmtDate(r.work_date)}</div><div class="b">${E(r.item)} · ${E(r.location||'-')}</div></div><div style="text-align:right"><div>${Y.fmtTime(r.check_in)} ~ ${r.check_out?Y.fmtTime(r.check_out):'근무중'}</div><div class="b">${r.minutes!=null ? Math.floor(r.minutes/60)+'시간 '+(r.minutes%60)+'분' : '-'}</div></div></div>`).join('') : '<p class="muted">이 달의 근무 내역이 없습니다</p>';
+  }
+  (async () => {
+    const me = await Y.guard('staff'); if(!me) return;
+    if(me.role==='admin'){ location.replace('admin.html'); return; }
+    $('#hello').textContent = me.name + '님';
+    const t = Y.today(); $('#today').textContent = Y.fmtDate(t);
+    $('#ym').value = t.slice(0,7); $('#ym').onchange = hist; $('#lo').onclick = Y.logout;
+    jobs(); hist();
+    document.addEventListener('visibilitychange', () => { if(!document.hidden){ jobs(); } });
+  })();
+})();
+</script>
+</body>
+</html>
