@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e6f0ff">
+<title>출퇴근 체크 · YOUNG.Re</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.q{max-width:420px;margin:0 auto;padding:22px 16px 40px}
+.brand{text-align:center;font-family:'Playfair Display',serif;font-weight:700;font-size:20px;color:#c4912c;margin-bottom:14px}
+.card{background:#fff;border-radius:20px;padding:16px;box-shadow:0 6px 20px rgba(110,120,200,.14)}
+.tile{display:flex;gap:12px;align-items:center;background:#f4f6ff;border-radius:14px;padding:11px 14px;margin-bottom:8px}
+.dot{width:34px;height:34px;border-radius:10px;background:#dfe7ff;color:#4b5bd6;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
+.tl{font-size:12px;color:#7d84a8}.tv{font-size:16px;font-weight:600;word-break:keep-all}
+.big{text-align:center;padding:10px 0 6px}
+.ck{width:64px;height:64px;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center}
+.ck svg{width:32px;height:32px}
+.big h2{font-size:20px;margin:0 0 6px}.big p{font-size:14px;color:#7d84a8;margin:0 0 8px;line-height:1.6}
+.row{display:flex;justify-content:space-between;font-size:15px;padding:9px 0;border-top:1px solid #eef0fb}.row span{color:#7d84a8}
+.cap{text-align:center;font-size:12.5px;color:#7d84a8;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="q">
+  <div class="brand">YOUNG.Re</div>
+
+  <section class="card" id="v-loading"><div class="big"><p>확인 중…</p></div></section>
+
+  <section class="card hide" id="v-form">
+    <div class="tile"><div class="dot">일</div><div><div class="tl">근무일</div><div class="tv" id="i-date"></div></div></div>
+    <div class="tile"><div class="dot">항</div><div><div class="tl">근무 항목</div><div class="tv" id="i-item"></div></div></div>
+    <div class="tile" id="t-loc"><div class="dot">장</div><div><div class="tl">장소</div><div class="tv" id="i-loc"></div></div></div>
+    <div class="tile" id="t-task"><div class="dot">업</div><div><div class="tl">작업 내용</div><div class="tv" id="i-task" style="font-size:15px"></div></div></div>
+    <div class="field" style="margin-top:12px"><label for="f-name">이름</label><input id="f-name" type="text" autocomplete="name" maxlength="20" placeholder="홍길동"></div>
+    <div class="field"><label for="f-phone">전화번호</label><input id="f-phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="010-0000-0000"></div>
+    <div class="msg" id="f-msg"></div>
+    <button class="btn" id="f-btn">출근 / 퇴근 확인</button>
+    <div class="cap">같은 번호로 다시 찍으면 퇴근 처리됩니다</div>
+  </section>
+
+  <section class="card hide" id="v-result">
+    <div class="big">
+      <div class="ck" id="r-ck"></div>
+      <h2 id="r-title"></h2><p id="r-sub"></p>
+    </div>
+    <div id="r-rows"></div>
+  </section>
+  <div class="cap hide" id="r-cap"></div>
+
+  <section class="card hide" id="v-error">
+    <div class="big">
+      <div class="ck" style="background:#ffeceb;color:#d6455d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+      <h2 id="e-title"></h2><p id="e-text"></p>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const views = ['loading','form','result','error'];
+  const show = v => views.forEach(x => $('v-'+x).classList.toggle('hide', x!==v));
+  const token = (new URLSearchParams(location.search).get('t') || '').trim();
+  const DOW = ['일','월','화','수','목','금','토'];
+  const OK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  const WAIT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>';
+
+  function fmtDate(s){ const d = new Date(s+'T00:00:00'); return s.replace(/-/g,'.') + ' (' + DOW[d.getDay()] + ')'; }
+  function fmtTime(iso){ if(!iso) return '-'; return new Date(iso).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Seoul'}); }
+  function fail(title, text){ $('e-title').textContent = title; $('e-text').textContent = text; show('error'); }
+
+  async function init(){
+    if(!token){ fail('사용할 수 없는 QR입니다','QR을 다시 찍어 주세요.'); return; }
+    const {data,error} = await YRE.sb.rpc('qr_info',{p_token: token});
+    if(error || !data){ fail('연결하지 못했습니다','잠시 후 다시 시도하세요.'); return; }
+    if(!data.ok){
+      if(data.reason==='expired') fail('사용할 수 없는 QR입니다','이 QR은 오늘 날짜의 QR이 아닙니다.\n현장 관리자에게 문의하세요.');
+      else fail('사용할 수 없는 QR입니다','유효하지 않거나 사용이 중지된 QR입니다.\n현장 관리자에게 문의하세요.');
+      $('e-text').style.whiteSpace = 'pre-line';
+      return;
+    }
+    $('i-date').textContent = fmtDate(data.work_date);
+    $('i-item').textContent = data.item;
+    $('t-loc').classList.toggle('hide', !data.location); $('i-loc').textContent = data.location || '';
+    $('t-task').classList.toggle('hide', !data.task); $('i-task').textContent = data.task || '';
+    try{ $('f-name').value = localStorage.getItem('yre_name') || ''; $('f-phone').value = localStorage.getItem('yre_phone') || ''; }catch(e){}
+    show('form');
+  }
+
+  function result(d){
+    const item = d.item + (d.location ? ' · ' + d.location : '');
+    const rows = [['항목', item], ['출근', fmtTime(d.check_in)], ['퇴근', fmtTime(d.check_out)]];
+    const T = {
+      in:       ['출근 처리되었습니다', d.name + '님, 오늘도 수고하세요', 'ok', OK_ICON, '퇴근할 때 같은 QR을 다시 찍어주세요'],
+      out:      ['퇴근 처리되었습니다', d.name + '님, 수고하셨습니다', 'ok', OK_ICON, ''],
+      done:     ['이미 퇴근 처리되었습니다', d.name + '님의 오늘 기록은 완료되었습니다', 'wait', WAIT_ICON, ''],
+      too_soon: ['방금 출근 처리되었습니다', '퇴근은 출근 1분 뒤부터 가능합니다', 'wait', WAIT_ICON, '퇴근할 때 같은 QR을 다시 찍어주세요']
+    }[d.status];
+    const ck = $('r-ck');
+    ck.innerHTML = T[3];
+    ck.style.background = T[2]==='ok' ? '#e3f6ec' : '#fff4dc';
+    ck.style.color = T[2]==='ok' ? '#2a9d6a' : '#b9801a';
+    $('r-title').textContent = T[0]; $('r-sub').textContent = T[1];
+    const box = $('r-rows'); box.innerHTML = '';
+    rows.forEach(([k,v]) => { const r = document.createElement('div'); r.className='row'; const a=document.createElement('span'); a.textContent=k; const b=document.createElement('b'); b.textContent=v; r.append(a,b); box.append(r); });
+    $('r-cap').textContent = T[4]; $('r-cap').classList.toggle('hide', !T[4]);
+    show('result');
+  }
+
+  $('f-btn').onclick = async () => {
+    const name = $('f-name').value.trim(), phone = $('f-phone').value, m = $('f-msg');
+    m.textContent = '';
+    if(name.length<2){ m.textContent = '이름을 입력하세요'; return; }
+    if(!YRE.validPhone(phone)){ m.textContent = '전화번호를 정확히 입력하세요'; return; }
+    $('f-btn').disabled = true;
+    const {data,error} = await YRE.sb.rpc('qr_check',{p_token: token, p_name: name, p_phone: YRE.digits(phone)});
+    $('f-btn').disabled = false;
+    if(error || !data){ m.textContent = '처리하지 못했습니다. 잠시 후 다시 시도하세요'; return; }
+    if(!data.ok){
+      if(data.reason==='bad_input'){ m.textContent = '이름과 전화번호를 확인하세요'; return; }
+      fail('사용할 수 없는 QR입니다', '현장 관리자에게 문의하세요.'); return;
+    }
+    try{ localStorage.setItem('yre_name', name); localStorage.setItem('yre_phone', YRE.digits(phone)); }catch(e){}
+    result(data);
+  };
+  $('f-phone').addEventListener('keydown', e => { if(e.key==='Enter') $('f-btn').click(); });
+  init();
+})();
+</script>
+</body>
+</html>
