@@ -11,8 +11,9 @@
 <link rel="stylesheet" href="admin.css">
 </head>
 <body>
-<header class="top"><div class="in"><span class="nm">YOUNG.Re</span><span class="sp"></span><span class="who" id="who"></span><button class="sbtn" id="lo">로그아웃</button></div>
-<nav class="tabs" id="tabs"></nav></header>
+<header class="top"><div class="in"><button class="hb" id="hb" aria-label="메뉴 열기·닫기"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><span class="nm">YOUNG.Re</span><span class="sp"></span><span class="who" id="who"></span><button class="sbtn" id="lo">로그아웃</button></div></header>
+<div class="ov" id="ov"></div>
+<aside class="side" id="side"><nav id="tabs"></nav></aside>
 <main id="main"><div class="cd"><p class="muted">불러오는 중…</p></div></main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
