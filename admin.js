@@ -153,6 +153,10 @@ async function pAssign(){
     <div class="row2"><label class="fl"><span>날짜</span><input type="date" id="a-date" value="${st.aDate||Y.today()}"></label>
     <div class="fl"><span>항목${qaBtn('item')}</span>${cs('a-item', activeItems(), st.aItem)}</div>
     <div class="fl"><span>장소${qaBtn('loc')}</span>${cs('a-loc', activeLocs(), st.aLoc, '선택 안 함')}</div></div>
+    <div class="ih"><span>배치 기간</span></div>
+    <div class="seg" id="a-span"><button type="button" data-s="1" class="on">하루 (선택한 날짜)</button><button type="button" data-s="r">기간 선택</button></div>
+    <div id="a-rng" style="display:none;margin-top:8px"><label class="fl"><span>종료일</span><input type="date" id="a-end"></label><label style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:14px"><input type="checkbox" id="a-wk" checked style="width:18px;height:18px;margin:0"> 토·일 포함</label>
+    <p class="muted" id="a-rh" style="margin:4px 0 0">시작일(위 날짜)부터 종료일까지 매일 같은 내용으로 배치합니다. 최대 31일.</p></div>
     <div class="ih"><span>전일 배치</span><span class="acts"><button class="btn line sm" id="a-prev">전일 불러오기</button></span></div>
     <div class="muted" style="margin:-2px 0 6px">전날의 항목·장소·직원·작업 내용을 선택한 날짜로 복사합니다. 이미 같은 항목으로 배치된 직원은 건너뜁니다.</div>
     <div class="ih"><span>근로자 선택</span><span class="acts"><button class="btn line sm" id="a-all">직원 전체</button><button class="btn line sm" id="a-new">알바 추가</button></span></div>
@@ -191,6 +195,8 @@ async function pAssign(){
   $('#a-item').onchange = () => { st.aItem = $('#a-item').value; cards(); };
   $('#a-date').onchange = list;
   let mode = 'plan';
+  let span = '1';
+  document.querySelectorAll('#a-span button').forEach(b => b.onclick = () => { span = b.dataset.s; document.querySelectorAll('#a-span button').forEach(x => x.classList.toggle('on', x===b)); $('#a-rng').style.display = span==='r' ? '' : 'none'; if(span==='r' && !$('#a-end').value) $('#a-end').value = $('#a-date').value; });
   document.querySelectorAll('#a-mode button').forEach(b => b.onclick = () => { mode = b.dataset.m; document.querySelectorAll('#a-mode button').forEach(x => x.classList.toggle('on', x===b)); $('#a-mh').textContent = mode==='in' ? '선택한 사람을 관리자가 바로 출근 처리합니다. (오늘이면 지금 시각, 다른 날짜면 09:00 기준)' : '직원이 앱에서 직접 출근 버튼을 누릅니다.'; });
   const syncPick = () => document.querySelectorAll('.wp input').forEach(i => i.closest('.wp').classList.toggle('on', i.checked));
   document.querySelectorAll('.wp input').forEach(i => i.onchange = syncPick);
@@ -207,19 +213,32 @@ async function pAssign(){
     const date = $('#a-date').value, item = $('#a-item').value, loc = $('#a-loc').value || null, task = $('#a-task').value.trim();
     if(!date || !item){ m.textContent = '날짜와 항목을 선택하세요'; return; }
     if(!ids.length){ m.textContent = '직원을 선택하세요'; return; }
+    let dates = [date], isR = span === 'r';
+    if(isR){
+      const end = $('#a-end').value; if(!end){ m.textContent = '종료일을 선택하세요'; return; } if(end < date){ m.textContent = '종료일이 시작일보다 빠릅니다'; return; }
+      const wk = $('#a-wk').checked; dates = [];
+      for(let t = new Date(date + 'T00:00:00Z'), e = new Date(end + 'T00:00:00Z'); t <= e; t.setUTCDate(t.getUTCDate()+1)){ const g = t.getUTCDay(); if(wk || (g!==0 && g!==6)) dates.push(t.toISOString().slice(0,10)); }
+      if(!dates.length){ m.textContent = '배치할 날짜가 없습니다'; return; }
+      if(dates.length > 31){ m.textContent = '기간은 최대 31일까지 가능합니다'; return; }
+      if(mode==='in' && dates.some(x => x > Y.today())){ m.textContent = '출근 처리는 오늘까지의 날짜에만 할 수 있습니다. 배치만으로 하세요'; return; }
+      if(!confirm(Y.fmtDate(dates[0]) + ' ~ ' + Y.fmtDate(dates[dates.length-1]) + ' (' + dates.length + '일) × ' + ids.length + '명을 배치할까요?\n이미 같은 항목으로 배치된 날은 건너뜁니다.')) return;
+    }
     $('#a-go').disabled = true;
-    const {data:asg,error} = await sb.from('assignments').upsert(ids.map(w => ({work_date:date,worker_id:w,item_id:item,location_id:loc,task_text:task||null})), {onConflict:'work_date,worker_id,item_id'}).select('id,worker_id');
+    const rowsA = dates.flatMap(dt => ids.map(w => ({work_date:dt,worker_id:w,item_id:item,location_id:loc,task_text:task||null})));
+    let {data:asg,error} = await sb.from('assignments').upsert(rowsA, isR ? {onConflict:'work_date,worker_id,item_id',ignoreDuplicates:true} : {onConflict:'work_date,worker_id,item_id'}).select('id,worker_id,work_date');
     if(error){ $('#a-go').disabled = false; m.textContent = errMsg(error); return; }
+    const added = (asg||[]).length;
+    if(isR && mode==='in'){ const q = await sb.from('assignments').select('id,worker_id,work_date').in('work_date',dates).in('worker_id',ids).eq('item_id',item); if(q.error){ $('#a-go').disabled = false; m.textContent = errMsg(q.error); return; } asg = q.data; }
     let done = 0;
     if(mode==='in'){
-      const rows = (asg||[]).map(a => ({worker_id:a.worker_id,work_date:date,item_id:item,location_id:loc,assignment_id:a.id,check_in:nowFor(date),price_applied:priceFor(a.worker_id,item,date),source:'admin'}));
+      const rows = (asg||[]).map(a => ({worker_id:a.worker_id,work_date:a.work_date||date,item_id:item,location_id:loc,assignment_id:a.id,check_in:nowFor(a.work_date||date),price_applied:priceFor(a.worker_id,item,a.work_date||date),source:'admin'}));
       const x = await sb.from('attendance').upsert(rows,{onConflict:'worker_id,work_date,item_id',ignoreDuplicates:true}).select('id');
       if(x.error){ $('#a-go').disabled = false; m.textContent = '배치는 저장했지만 출근 처리에 실패했습니다: ' + errMsg(x.error); list(); return; }
       done = (x.data||[]).length;
     }
     $('#a-go').disabled = false;
     await saveNote(date, item, loc, task);
-    st.aItem = item; Y.toast(mode==='in' ? `${ids.length}명 배치, ${done}명 출근 처리했습니다` + (done<ids.length ? ` (${ids.length-done}명은 이미 출근 기록이 있습니다)` : '') : ids.length + '명에게 업무를 부여했습니다'); document.querySelectorAll('#a-staff input').forEach(c => c.checked = false); syncPick(); list(); cards();
+    st.aItem = item; if(isR){ const tot = dates.length*ids.length; Y.toast(dates.length + '일 × ' + ids.length + '명 중 ' + added + '건 배치' + (tot-added ? ', ' + (tot-added) + '건 건너뜀' : '') + (mode==='in' ? ', ' + done + '건 출근 처리' : '')); } else Y.toast(mode==='in' ? `${ids.length}명 배치, ${done}명 출근 처리했습니다` + (done<ids.length ? ` (${ids.length-done}명은 이미 출근 기록이 있습니다)` : '') : ids.length + '명에게 업무를 부여했습니다'); document.querySelectorAll('#a-staff input').forEach(c => c.checked = false); syncPick(); list(); cards();
   };
   cards(); list();
 }
@@ -502,6 +521,14 @@ async function pStmt(){
     try{ data = await stmtData(st.stYm || ym); }catch(e){ box.innerHTML = `<div class="warn">${E(e.message||String(e))}</div>`; return; }
     cur ? detail() : list();
   };
+  const payBar = () => { const w = S.workers.find(k => k.id===cur); if(!w) return ''; const pt = w.pay_type||'daily', amt = (pt==='weekly'?w.weekly_wage:w.monthly_wage)||'';
+    return `<div class="cd"><h3>급여 유형 <span class="muted">(바꾸면 계정 설정에도 같이 적용)</span></h3><div class="fl">${cs('sp-pt', PAYLIST, pt)}</div>${pt!=='daily' ? `<label class="fl" style="margin-top:8px"><span>${pt==='weekly'?'주급':'월급'} 금액(원)</span><input type="number" min="0" step="10000" id="sp-wa" value="${amt}" placeholder="금액 입력"></label>` : ''}<div class="fl" style="margin-top:8px"><span>세금 방식</span>${cs('sp-tx', pt==='daily' ? TAXLIST : TAXLIST2, w.tax_type==='daily' ? 'none' : w.tax_type)}</div></div>`; };
+  const bindPay = () => { const w = S.workers.find(k => k.id===cur); if(!w) return; const NO = '급여 유형용 SQL을 먼저 실행하세요 (young-re-paytype.sql)';
+    const save = async (upd, msg) => { const r = await sb.from('workers').update(upd).eq('id',w.id); if(r.error){ Y.toast(/pay_type|wage|column/.test(r.error.message) ? NO : errMsg(r.error),1); detail(); return; } Object.assign(w, upd); await loadRefs(); Y.toast(msg||'저장했습니다'); await draw(); };
+    const pt = $('#sp-pt'); if(pt) pt.onchange = () => { const v = pt.value || 'daily', upd = {pay_type:v}; if(v!=='daily' && w.tax_type==='daily') upd.tax_type = 'none'; save(upd); };
+    const wa = $('#sp-wa'); if(wa) wa.onchange = () => { const v = wa.value.trim()==='' ? null : parseInt(wa.value,10); if(v!==null && !(v>=0)){ Y.toast('금액을 숫자로 입력하세요',1); return; } save(w.pay_type==='weekly' ? {weekly_wage:v} : {monthly_wage:v}); };
+    const tx = $('#sp-tx'); if(tx) tx.onchange = () => save({tax_type:tx.value});
+  };
   const optBar = () => `<div class="cd"><h3>표시 설정 <span class="muted">(명세서·이미지·엑셀에 공통 적용)</span></h3>
     <div class="fl"><span>보기 방식</span><div class="seg" id="so-mode"><button data-v="detail" class="${o.mode==='detail'?'on':''}">일자별 상세</button><button data-v="total" class="${o.mode==='total'?'on':''}">합계만</button></div></div>
     <div class="fl"><span>표시 항목</span><div class="cp" style="display:flex;flex-wrap:wrap;gap:6px">${[['loc','장소'],['time','근무시간'],['tax','세금'],['adj','가감 항목']].map(([k,n]) => `<button type="button" class="cb${o[k]?' on':''}" data-so="${k}" ${k!=='tax'&&k!=='adj'&&o.mode==='total'?'disabled':''}>${n}</button>`).join('')}</div></div></div>`;
@@ -531,12 +558,12 @@ async function pStmt(){
   const detail = () => {
     const x = data.list.find(k => k.pay.worker_id===cur), box = $('#st-box'); if(!x){ cur = null; list(); return; }
     const m = stmtModel(x, st.stYm||ym, o);
-    box.innerHTML = `<div class="cd bdr"><button class="btn line sm" id="sd-back">← 목록</button><span style="flex:1"></span><button class="btn line sm" id="sd-print">인쇄 / PDF</button><button class="btn sm" id="sd-img">이미지 저장</button></div>` + optBar() +
+    box.innerHTML = `<div class="cd bdr"><button class="btn line sm" id="sd-back">← 목록</button><span style="flex:1"></span><button class="btn line sm" id="sd-print">인쇄 / PDF</button><button class="btn sm" id="sd-img">이미지 저장</button></div>` + payBar() + optBar() +
       `<div class="cd">${stmtHtml(m)}</div>` +
       `<div class="cd"><h3>가감 항목 <span class="muted">(수당은 +, 공제는 −)</span></h3>${data.adjMissing ? '<p class="muted">young-re-adjust.sql을 먼저 실행해야 사용할 수 있습니다.</p>' : `${x.adj.length ? `<div class="prl">${x.adj.map(a => `<div class="pr"><div class="pn"><b>${E(a.label)}</b></div><b class="${a.amount<0?'neg':''}">${money(a.amount)}</b><button class="btn red sm" data-ad="${a.id}">삭제</button></div>`).join('')}</div>` : '<p class="muted">추가한 항목이 없습니다</p>'}
       <div class="row2" style="margin-top:12px"><label class="fl"><span>항목 이름</span><input id="ad-l" maxlength="20" placeholder="예: 식대, 선지급"></label><div class="fl"><span>구분</span>${cs('ad-s',[{id:'+',name:'지급 +'},{id:'-',name:'공제 −'}],'+')}</div><label class="fl"><span>금액(원)</span><input id="ad-a" type="number" min="0" step="1000"></label></div><div class="msg" id="ad-m"></div><button class="btn sm" id="ad-go" style="margin-top:6px">추가</button>
       <p class="muted" style="margin-top:10px">가감 항목은 세금 계산에 포함되지 않고 실지급액에만 더하거나 뺍니다.</p>`}</div>`;
-    bindOpt();
+    initChips(box); bindOpt(); bindPay();
     $('#sd-back').onclick = () => { cur = null; list(); };
     $('#sd-img').onclick = () => stmtSaveImg(m);
     $('#sd-print').onclick = () => { document.body.classList.add('printing'); window.print(); setTimeout(() => document.body.classList.remove('printing'), 500); };
