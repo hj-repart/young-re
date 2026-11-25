@@ -174,7 +174,12 @@ async function pAssign(){
     const {data,error} = await sb.from('assignments').select('id,task_text,workers(name),items(name),locations(name)').eq('work_date',d).order('created_at');
     if(error){ $('#a-list').innerHTML = `<div class="warn">${E(error.message)}</div>`; return; }
     $('#a-list').innerHTML = (data||[]).length ? `<div class="tw"><table class="t"><thead><tr><th>직원</th><th>항목</th><th>장소</th><th>작업 내용</th><th></th></tr></thead><tbody>${data.map(r => `<tr><td>${E((r.workers||{}).name)}</td><td>${E((r.items||{}).name)}</td><td>${E((r.locations||{}).name||'-')}</td><td style="white-space:normal">${E(r.task_text||'-')}</td><td><button class="btn red sm" data-del="${r.id}">삭제</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">이 날짜에 부여된 업무가 없습니다</p>';
-    $('#a-list').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if(!confirm('이 업무를 삭제할까요?')) return; const r = await sb.from('assignments').delete().eq('id',b.dataset.del); if(r.error) Y.toast(errMsg(r.error),1); else { Y.toast('삭제했습니다'); list(); } });
+    $('#a-list').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      const lk = await sb.from('attendance').select('id').eq('assignment_id',b.dataset.del); if(lk.error){ Y.toast(errMsg(lk.error),1); return; }
+      const n = (lk.data||[]).length;
+      if(!confirm(n ? '이 업무를 삭제할까요?\n연결된 출퇴근 기록 ' + n + '건도 함께 삭제됩니다.' : '이 업무를 삭제할까요?')) return;
+      if(n){ const x = await sb.from('attendance').delete().eq('assignment_id',b.dataset.del); if(x.error){ Y.toast(errMsg(x.error),1); return; } }
+      const r = await sb.from('assignments').delete().eq('id',b.dataset.del); if(r.error) Y.toast(errMsg(r.error),1); else { Y.toast(n ? '업무와 출퇴근 기록을 삭제했습니다' : '삭제했습니다'); list(); } });
   };
   $('#a-prev').onclick = async () => {
     const d = $('#a-date').value; if(!d){ Y.toast('날짜를 선택하세요',1); return; }
@@ -360,7 +365,16 @@ async function pQuery(){
     const itc = id => { const i = S.items.findIndex(x => x.id===id); return 'c' + (i<0?0:i%8); };
     const line = r => { const w = r.workers||{}, main1 = q.view==='date' ? wn(w.name,w.gender) : Y.fmtDate(r.work_date), sub = q.view==='person' ? '' : '';
       return `<div class="qr"><div class="qm"><b>${main1}</b>${q.view==='item' ? `<span class="qs">${wn(w.name,w.gender)}</span>` : ''}</div><div class="qcc"><span class="ti ${itc(r.item_id)}">${E((r.items||{}).name)}</span>${(r.locations||{}).name?`<span class="tl">${E(r.locations.name)}</span>`:''}</div><details class="qt"><summary>${r.check_out ? Y.fmtDur(r.check_in,r.check_out) : '<span class="chip work">근무중</span>'}</summary><span class="qi">출근 ${Y.fmtTime(r.check_in)} · 퇴근 ${r.check_out?Y.fmtTime(r.check_out):'-'}</span></details><div class="qp">${Y.won(r.price_applied)}</div><div class="acts"><button class="btn line sm" data-ed="${r.id}">수정</button><button class="btn red sm" data-del="${r.id}">삭제</button></div></div>`; };
-    $('#f-res').innerHTML = `<div class="qtot"><span>전체 ${rows.length}건</span><b>${Y.won(total)}</b></div>` + keys.map(k => { const g = groups.get(k), sum = g.reduce((s,r) => s + (r.price_applied||0), 0), w0 = (g[0].workers||{}); const ttl = q.view==='person' ? wn(k,w0.gender) : E(k); return `<div class="qg"><div class="qh"><span class="qn">${ttl}</span><span class="qk">${g.length}건</span><b>${Y.won(sum)}</b></div>${g.map(line).join('')}</div>`; }).join('');
+    $('#f-res').innerHTML = `<div class="qtot"><span>전체 ${rows.length}건</span><b>${Y.won(total)}</b></div><div style="display:flex;justify-content:flex-end;margin:0 0 10px"><button class="btn red sm" id="f-delall">조회된 ${rows.length}건 전체 삭제</button></div>` + keys.map(k => { const g = groups.get(k), sum = g.reduce((s,r) => s + (r.price_applied||0), 0), w0 = (g[0].workers||{}); const ttl = q.view==='person' ? wn(k,w0.gender) : E(k); return `<div class="qg"><div class="qh"><span class="qn">${ttl}</span><span class="qk">${g.length}건</span><b>${Y.won(sum)}</b></div>${g.map(line).join('')}</div>`; }).join('');
+    $('#f-delall').onclick = async () => {
+      const cnt = rows.length, per = q.from === q.to ? Y.fmtDate(q.from) : Y.fmtDate(q.from) + ' ~ ' + Y.fmtDate(q.to);
+      if(!confirm('조회된 출퇴근 기록 ' + cnt + '건(' + per + ')을 모두 삭제할까요?\n정산 금액에서도 빠지며 되돌릴 수 없습니다.')) return;
+      if(!confirm('정말 ' + cnt + '건을 삭제합니다. 계속할까요?')) return;
+      const ids = rows.map(r => r.id); let fail = null;
+      for(let i = 0; i < ids.length && !fail; i += 100){ const r = await sb.from('attendance').delete().in('id', ids.slice(i, i+100)); if(r.error) fail = r.error; }
+      if(fail) Y.toast(errMsg(fail),1); else Y.toast(cnt + '건을 삭제했습니다');
+      load();
+    };
     $('#f-res').querySelectorAll('[data-ed]').forEach(b => b.onclick = () => edit(rows.find(r => r.id===b.dataset.ed)));
     $('#f-res').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if(!confirm('이 출퇴근 기록을 삭제할까요?')) return; const r = await sb.from('attendance').delete().eq('id',b.dataset.del); if(r.error) Y.toast(errMsg(r.error),1); else { Y.toast('삭제했습니다'); load(); } });
   };
